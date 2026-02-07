@@ -1,0 +1,204 @@
+Product Requirements Document (PRD): AI Agent System for Trading Strategy Development and Evaluation
+Author: Grok (Assisted by xAI)
+Prepared for: Preston Dinova (@PDinova)
+Date: February 06, 2026
+Version: 1.1
+Status: Draft for Review
+
+Change History
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+VersionDateAuthorChanges1.0February 05, 2026GrokInitial draft based on conversation history and requirements.1.1February 06, 2026GrokUpdated to incorporate GitHub integration for version control (commits, pushes, and branching); emphasized OLE interface for development and testing phases; added related user stories, scenarios, and considerations.
+
+Overview
+Project Description
+This PRD outlines the requirements for building a multi-agent AI system designed to identify, implement, evaluate, and iterate on trading strategies using AmiBroker as the core backtesting engine. The system will leverage Python for agent orchestration and OLE Automation for seamless integration with AmiBroker. Drawing from AI agentic paradigms (inspired by frameworks like LangChain or ReAct, and adapted for Claude-assisted coding), the system emphasizes human-explainable outputs, continuous testing, and refinement to mitigate issues like AFL syntax errors or suboptimal strategies.
+The system will operate in a local environment, using a preloaded AmiBroker database for historical data. Agents will collaborate: generating strategy ideas, implementing them as AFL code, evaluating via backtests/optimizations, and explaining results with XAI techniques. This enables automated iteration while maintaining transparency for users like traders or developers in Chantilly, VA, who may want to oversee or intervene.
+To enhance development and tracking, the system will integrate with GitHub for version control: committing and pushing changes to AFL code, .apx projects, reports, and agent configurations. Branches will be used to track progress on specific trading ideas or iterations, with OLE interface leveraged for dev (e.g., code generation/testing) and testing (e.g., automated backtests in branches).
+Purpose and Goals
+
+Primary Goal: Automate the discovery and refinement of profitable trading strategies, reducing manual effort while ensuring explainability to comply with financial best practices.
+Secondary Goals:
+Support continuous testing/refinement loops to handle errors (e.g., AFL syntax issues) and improve strategies over iterations.
+Integrate Claude (or similar LLMs) for code generation, with safeguards for accuracy.
+Enable scalability for portfolio-level evaluations and real-time data supplements (e.g., via Polygon API).
+Use GitHub for tracking changes and branches to organize development, testing, and idea exploration via OLE-driven workflows.
+
+
+Business Value
+
+Accelerates strategy development from weeks to hours.
+Reduces risks of overfitting or errors through iterative, explainable processes.
+Targets users in quantitative finance, providing a tool for edge in volatile markets (e.g., post-2026 economic shifts), with GitHub enabling collaborative tracking of ideas.
+
+
+Success Metrics
+
+Quantitative:
+System uptime: 95% during iterations (measured via logs).
+Iteration speed: Complete 10 strategy variants in under 30 minutes on standard hardware.
+Error handling: Detect and recover from 90% of AFL syntax/function errors without crashes.
+Strategy performance: Generate strategies with average Sharpe ratio >1.2 in out-of-sample tests (benchmark against baseline MA crossover).
+GitHub Usage: At least 80% of iterations committed/pushed; branches created for 100% of new trading ideas.
+
+Qualitative:
+User satisfaction: 4/5 rating on explainability and version control (via feedback surveys).
+Adoption: Successful integration with user's AmiBroker setup and GitHub repo within 1 week of deployment.
+
+
+
+Messaging and Positioning
+
+Internal Messaging: "An AI-powered team of agents that turns trading ideas into tested, explainable strategies—fast, reliably, and version-controlled via GitHub."
+External/User Messaging: "Build better trades with AI: Generate, test, and refine strategies in AmiBroker, with full transparency, error-proof iterations, and GitHub branching for organized progress tracking."
+Unique Selling Points (USPs): Human-explainable AI, seamless AmiBroker integration via OLE, Claude-assisted coding for robust AFL generation, and GitHub for collaborative dev/testing.
+
+
+Timeline/Release Planning
+
+Phase 1: MVP Development (Weeks 1-4, Q1 2026): Core agents (Generation, Implementation, Evaluation, Explanation) with basic iteration loop; initial GitHub setup for commits/pushes.
+Phase 2: Testing and Refinement (Weeks 5-6): Integrate error handling, Claude code gen, optimization runs, and GitHub branching for tracking ideas; use OLE for automated dev/testing in branches.
+Phase 3: Beta Release (Week 7): Full system with UI (e.g., simple CLI or Flask dashboard) for user testing; GitHub webhooks for auto-pushes on successful tests.
+Phase 4: Production (Week 8+): Add scaling (parallel agents), live data integration, and monitoring; advanced branching strategies.
+Dependencies: User's preloaded AmiBroker database; Python 3.12+ environment; GitHub account/repo setup.
+Milestones: Weekly check-ins; GitHub repo initialization in Week 1; final delivery by March 2026.
+
+
+Personas
+
+Primary Persona: Quantitative Trader (e.g., Preston Dinova)
+Demographics: 30-50 years old, tech-savvy, based in US (e.g., Virginia), with experience in AmiBroker and Python.
+Needs: Quick iteration on strategies without deep coding; explainable results for decision-making; version control for tracking ideas.
+Pain Points: Manual AFL debugging, time-consuming backtests, lack of automation for variants; disorganized progress tracking.
+
+Secondary Persona: Developer/Quant Researcher
+Needs: Extensible system for custom agents; integration with LLMs like Claude for code refinement; GitHub for branching and collaboration.
+
+
+
+User Scenarios
+
+Scenario 1: Initial Strategy Iteration
+User inputs a base idea (e.g., "MA crossover with RSI filter"). System generates variants, implements AFL, runs backtests on preloaded data via OLE, explains results (e.g., "RSI >30 reduced drawdown by 15%"), commits changes to GitHub, and iterates if metrics are low—creating a new branch for each major variant.
+Scenario 2: Error Handling and Refinement
+If AFL syntax error occurs (e.g., undefined function), system detects via OLE returns, logs details, uses Claude to fix code, retries, and pushes the fixed version to a "refinement" branch on GitHub—ensuring continuous refinement without user intervention.
+Scenario 3: Optimization Run
+User requests parameter tuning (e.g., MA periods 5-100). System runs optimizations via OLE Run(4), exports results, refines based on walk-forward tests, creates a branch for the idea (e.g., "ma-optimization-v1"), and commits reports/pushes to GitHub for tracking progress.
+Scenario 4: Branch-Based Idea Tracking
+User explores a new trading idea (e.g., momentum with volume). System creates a GitHub branch (e.g., "feature/momentum-volume"), develops/tests via OLE in that branch, commits AFL/.apx changes, and merges to main upon successful evaluation.
+
+
+User Stories/Features/Requirements
+Prioritized using MoSCoW method (Must-Have, Should-Have, Could-Have, Won't-Have).
+Must-Have Features
+
+Strategy Generation Agent
+As a user, I want the agent to brainstorm and vary strategies (e.g., add filters like RSI) based on inputs, so I can explore new ideas.
+Requirements: Use LLM (Claude) for generation; output explainable rationales; limit to 5-10 variants per cycle; commit generated ideas to GitHub branches for tracking.
+
+Implementation Agent
+As a user, I want AFL code generated and embedded in .apx projects, so strategies can run in AmiBroker.
+Requirements: Python-based code gen with comments; handle OLE for loading and testing during dev; integrate Claude for syntax validation/fixes; push AFL/.apx changes to GitHub.
+
+Evaluation Agent
+As a user, I want automated backtests/optimizations on my database, so I can assess performance.
+Requirements: Use OLE Run(2/4) for backtest/optimize; poll IsBusy; export results as CSV/HTML; metrics include Sharpe, drawdown, win rate; commit results to GitHub branches for progress tracking.
+
+Explanation Agent
+As a user, I want interpretable outputs, so I understand why strategies succeed/fail.
+Requirements: Apply XAI (e.g., feature importance via SHAP); generate reports with visuals (Matplotlib heatmaps); counterfactuals (e.g., "If RSI=40, returns drop 5%"); push reports to GitHub.
+
+Coordinator/Orchestrator
+As a user, I want an agent loop for continuous testing/refinement, so the system iterates autonomously.
+Requirements: Python script managing agents; error detection (e.g., via OLE returns/exceptions); retry with Claude fixes; stop criteria (e.g., Sharpe >1.5 or 20 iterations); integrate GitHub for commits/pushes and branch creation.
+
+Version Control Integration
+As a user, I want GitHub used for committing/pushing changes and creating branches, so I can track progress and trading ideas.
+Requirements: Automate git commands (via Python's subprocess or gitpython library) to commit AFL code, .apx files, reports, and configs; create branches (e.g., "feature/{idea-name}") for each new idea or iteration; use OLE for dev/testing within branches (e.g., checkout branch, run tests, commit results); support pull requests for merging refined strategies.
+
+
+Should-Have Features
+
+Error Handling Module
+As a user, I want AFL syntax/function errors detected and fixed, with changes tracked in GitHub.
+Requirements: Log errors; fallback to manual review if unresolvable; commit fixes to dedicated "bugfix" branches.
+
+Integration with External Tools
+As a user, I want support for Moltbot and Polygon API, with changes versioned in GitHub.
+Requirements: Modular plugins; secure API keys; push integration code to branches.
+
+
+Could-Have Features
+
+UI/Dashboard
+As a user, I want a web-based dashboard to monitor iterations and GitHub branches.
+Requirements: Flask-based; view commit history and OLE test results.
+
+Parallel Processing
+As a user, I want multiple AnalysisDocs run in parallel, with branches for concurrent ideas.
+
+
+Won't-Have (Non-Goals)
+
+Live trading execution (focus on backtesting only to avoid risks).
+Cloud deployment (local-first for privacy).
+Advanced ML models in AFL (keep explainable; no black-box).
+
+
+Designs
+
+High-Level Architecture: Multi-agent system in Python; OLE bridge to AmiBroker; Claude API for code gen/refinement; GitHub integration for version control.
+(Sketch: Coordinator → Gen Agent → Impl Agent → Eval Agent → Expl Agent → GitHub Commit/Push/Branch → Loop if needed.)
+Tech Stack:
+Languages: Python 3.12+, AFL.
+Libraries: win32com (OLE), pandas (results parsing), matplotlib (visuals), xml.etree ( .apx editing), gitpython (for GitHub automation).
+Tools: Claude (for coding agents), AmiBroker Professional, optional Moltbot, GitHub (for repo management).
+
+Branching Strategy: Feature branches for ideas (e.g., "feature/ma-rsi"); bugfix branches for errors; main for stable versions. Use OLE for testing in isolated branches.
+Wireframes: TBD—Start with CLI; evolve to simple dashboard showing iteration logs, metrics, and GitHub branch status.
+
+
+Open Issues
+
+AFL Error Granularity: OLE doesn't provide detailed AFL error messages; explore AmiBroker logs or UI visibility for debugging; integrate with GitHub issues for tracking.
+Claude Integration: API costs and rate limits; fallback to local LLMs if needed.
+Performance: Backtest times on large databases; optimize with parameter grids; GitHub pushes should not bottleneck iterations.
+Regulatory: Ensure explainability aligns with SEC guidelines for AI in finance.
+GitHub Security: Handle auth tokens securely (e.g., via environment vars); avoid committing sensitive data like API keys.
+
+
+Q&A
+
+Q: How does Claude fit in? A: Used for generating/refining AFL code within agents, with prompts emphasizing syntax correctness and error avoidance; commits include Claude-generated diffs.
+Q: What if iterations fail? A: System aborts via OLE Abort(), logs issues, creates a bugfix branch, and retries up to 3 times with refinements.
+Q: Scalability? A: Designed for local runs; could extend to cloud agents later, with GitHub for remote collaboration.
+Q: How does GitHub branching work with OLE? A: During dev, checkout branch, use OLE to test AFL locally; commit results; for testing, run full evaluations in branch before merging.
+
+
+Other Considerations
+
+Security: Handle sensitive data (e.g., API keys) with environment variables; no internet access during core operations except for optional APIs; GitHub repo should be private.
+Testing: Unit tests for agents (e.g., mock OLE); end-to-end with sample databases; GitHub actions for CI/CD on pushes (e.g., auto-run OLE tests on branches).
+AI-Specific Adaptations: Following agentic paradigms, structure development in phases (e.g., Phase 1: Core Loop; Phase 2: Error Handling and GitHub); with "DO NOT CHANGE" constraints for stable components like OLE interfaces. Use CLAUDE.md for context in code gen prompts.
+Next Steps: Review this updated PRD, gather feedback, then proceed to Phase 1 development with Claude-assisted coding and GitHub repo setup.

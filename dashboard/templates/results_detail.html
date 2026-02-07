@@ -1,0 +1,440 @@
+{% extends "base.html" %}
+
+{% block title %}{{ filename }} — AmiTesting{% endblock %}
+
+{% block extra_head %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item">Results</li>
+        <li class="breadcrumb-item active">{{ filename }}</li>
+    </ol>
+</nav>
+
+<!-- ── Header Row ─────────────────────────────────────── -->
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-2">
+    <div class="d-flex align-items-center gap-3">
+        <h2 class="fw-bold mb-0">
+            {% if strategy and strategy.name %}
+                {{ strategy.name }}
+            {% else %}
+                {{ filename }}
+            {% endif %}
+        </h2>
+        {% if status == "approved" %}
+            <span class="badge badge-approved fs-6">Approved</span>
+        {% elif status == "rejected" %}
+            <span class="badge badge-rejected fs-6">Rejected</span>
+        {% elif status == "staged" %}
+            <span class="badge badge-staged fs-6">Staged</span>
+        {% else %}
+            <span class="badge badge-pending fs-6">Pending</span>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/results/{{ filename }}/stage" class="d-inline">
+            <button type="submit" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-arrow-up-circle me-1"></i>Stage
+            </button>
+        </form>
+        <form method="POST" action="/results/{{ filename }}/approve" class="d-inline">
+            <button type="submit" class="btn btn-outline-success btn-sm">
+                <i class="bi bi-check-circle me-1"></i>Approve
+            </button>
+        </form>
+        <form method="POST" action="/results/{{ filename }}/reject" class="d-inline">
+            <button type="submit" class="btn btn-outline-danger btn-sm">
+                <i class="bi bi-x-circle me-1"></i>Reject
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ── Strategy Description ───────────────────────────── -->
+{% if strategy %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between" data-bs-toggle="collapse" data-bs-target="#strategyInfo" role="button" aria-expanded="true">
+        <span><i class="bi bi-info-circle me-2"></i>Strategy Information</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="strategyInfo">
+        <div class="card-body">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+                <h5 class="fw-bold mb-0">{{ strategy.name }}</h5>
+                {% if strategy.symbol %}
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-tag me-1"></i>{{ strategy.symbol }}
+                    </span>
+                {% endif %}
+            </div>
+
+            {% if strategy.summary %}
+                <p class="fst-italic text-muted mb-3">{{ strategy.summary }}</p>
+            {% endif %}
+
+            {% if strategy.description %}
+                <div class="mb-3">
+                    {% for para in strategy.description.split('\n') %}
+                        {% if para.strip() %}
+                            <p class="mb-2">{{ para }}</p>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            {% if strategy.parameters %}
+            <div class="mb-3">
+                <a class="fw-semibold text-decoration-none" data-bs-toggle="collapse" href="#strategyParams" role="button" aria-expanded="true">
+                    <i class="bi bi-sliders me-1"></i>Parameters
+                    <i class="bi bi-chevron-down small ms-1"></i>
+                </a>
+                <div class="collapse show mt-2" id="strategyParams">
+                    <table class="table table-sm table-bordered mb-0" style="max-width: 500px;">
+                        <thead class="table-light">
+                            <tr><th>Parameter</th><th>Value</th></tr>
+                        </thead>
+                        <tbody>
+                            {% if strategy.parameters is mapping %}
+                                {% for key, val in strategy.parameters.items() %}
+                                <tr>
+                                    <td class="fw-semibold text-mono">{{ key }}</td>
+                                    <td>{{ val }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                {% for param in strategy.parameters %}
+                                <tr>
+                                    <td class="fw-semibold text-mono">{{ param.name }}</td>
+                                    <td>{{ param.value }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if strategy.risk_notes %}
+            <div class="callout-amber">
+                <i class="bi bi-shield-exclamation me-1"></i>
+                <strong>Risk Notes:</strong> {{ strategy.risk_notes }}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Equity Curve Chart ─────────────────────────────── -->
+<div class="card mb-4">
+    <div class="card-header">
+        <i class="bi bi-graph-up me-2"></i>Equity Curve
+    </div>
+    <div class="card-body">
+        <div id="equityCurveError" class="d-none">
+            <div class="callout-amber">
+                <i class="bi bi-exclamation-circle me-1"></i>
+                <span id="equityCurveErrorMsg">Unable to load equity curve data.</span>
+            </div>
+        </div>
+        <div id="equityCurveLoading" class="text-center py-4">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="text-muted mt-2">Loading equity curve...</p>
+        </div>
+        <canvas id="equityCurveChart" style="display:none;"></canvas>
+    </div>
+</div>
+
+<!-- ── Metrics Cards ──────────────────────────────────── -->
+{% if parsed and not parsed.error %}
+    {% set m = parsed.metrics if parsed.metrics is defined else parsed %}
+    <div class="row g-3 mb-4">
+        {% if m.total_trades is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-blue">
+                <div class="metric-value">{{ m.total_trades }}</div>
+                <div class="metric-label">Total Trades</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.winning_trades is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-green">
+                <div class="metric-value text-success">{{ m.winning_trades }}</div>
+                <div class="metric-label">Winning Trades</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.losing_trades is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-red">
+                <div class="metric-value text-danger">{{ m.losing_trades }}</div>
+                <div class="metric-label">Losing Trades</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.win_rate is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-green">
+                <div class="metric-value">{{ m.win_rate }}{% if m.win_rate is number %}%{% endif %}</div>
+                <div class="metric-label">Win Rate</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.total_profit is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-green">
+                <div class="metric-value {% if m.total_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    {{ m.total_profit }}
+                </div>
+                <div class="metric-label">Total Profit</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.avg_profit_per_trade is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-green">
+                <div class="metric-value {% if m.avg_profit_per_trade >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    {{ m.avg_profit_per_trade }}
+                </div>
+                <div class="metric-label">Avg Profit per Trade</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.max_drawdown is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-red">
+                <div class="metric-value text-danger">{{ m.max_drawdown }}</div>
+                <div class="metric-label">Max Drawdown</div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if m.long_trades is defined or m.short_trades is defined %}
+        <div class="col-6 col-lg-3">
+            <div class="metric-card border-gray">
+                <div class="metric-value">
+                    {{ m.long_trades|default('—') }}
+                    <span class="text-muted fs-6">/</span>
+                    {{ m.short_trades|default('—') }}
+                </div>
+                <div class="metric-label">Long / Short</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+{% endif %}
+
+{% if parsed and parsed.error %}
+    <div class="alert alert-danger mb-4">
+        <i class="bi bi-exclamation-triangle me-1"></i>{{ parsed.error }}
+    </div>
+{% endif %}
+
+<!-- ── Trade Table ─────────────────────────────────────── -->
+{% if parsed and parsed.trades %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-table me-2"></i>Trade Log</span>
+        <span class="badge bg-secondary">{{ parsed.trades|length }} trades</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        {% if parsed.columns is defined %}
+                            {% for col in parsed.columns %}
+                            <th>{{ col }}</th>
+                            {% endfor %}
+                        {% else %}
+                            <th>Symbol</th>
+                            <th>Type</th>
+                            <th>Entry Date</th>
+                            <th>Entry Price</th>
+                            <th>Exit Date</th>
+                            <th>Exit Price</th>
+                            <th>Shares</th>
+                            <th class="text-end">Profit</th>
+                            <th class="text-end">Cum. Profit</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trade in parsed.trades %}
+                    {% if parsed.columns is defined %}
+                        {# Dynamic columns from CSV #}
+                        {% set profit_col = parsed.metrics.get("profit_column_used", None) if parsed.metrics is defined and parsed.metrics is mapping else None %}
+                        {% if profit_col and trade.get(profit_col, "") != "" %}
+                            {% set pval = trade[profit_col] | float(0) %}
+                            {% if pval > 0 %}
+                    <tr class="trade-win">
+                            {% elif pval < 0 %}
+                    <tr class="trade-loss">
+                            {% else %}
+                    <tr>
+                            {% endif %}
+                        {% else %}
+                    <tr>
+                        {% endif %}
+                        <td class="text-muted">{{ loop.index }}</td>
+                        {% for col in parsed.columns %}
+                        <td>{{ trade[col] }}</td>
+                        {% endfor %}
+                    </tr>
+                    {% else %}
+                        {# Structured trade objects #}
+                        {% set profit = trade.profit|default(0)|float %}
+                    <tr class="{{ 'trade-win' if profit > 0 else ('trade-loss' if profit < 0 else '') }}">
+                        <td class="text-muted">{{ loop.index }}</td>
+                        <td class="fw-semibold">{{ trade.symbol|default('—') }}</td>
+                        <td>
+                            {% if trade.type is defined %}
+                                {% if trade.type|lower == 'long' %}
+                                    <span class="badge bg-primary bg-opacity-10 text-primary">Long</span>
+                                {% elif trade.type|lower == 'short' %}
+                                    <span class="badge bg-warning bg-opacity-10 text-warning">Short</span>
+                                {% else %}
+                                    {{ trade.type }}
+                                {% endif %}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td>{{ trade.entry_date|default('—') }}</td>
+                        <td>{{ trade.entry_price|default('—') }}</td>
+                        <td>{{ trade.exit_date|default('—') }}</td>
+                        <td>{{ trade.exit_price|default('—') }}</td>
+                        <td>{{ trade.shares|default('—') }}</td>
+                        <td class="text-end fw-semibold {{ 'text-success' if profit > 0 else ('text-danger' if profit < 0 else '') }}">
+                            {% if trade.profit is defined %}
+                                {{ '%.2f'|format(trade.profit|float) }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if trade.cum_profit is defined %}
+                                {{ '%.2f'|format(trade.cum_profit|float) }}
+                            {% else %}
+                                —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Downloads / Navigation ─────────────────────────── -->
+<div class="d-flex flex-wrap gap-2 mb-4">
+    <a href="/" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+    </a>
+    {% if has_html %}
+    <a href="/results/{{ filename.replace('.csv', '.html') }}/download" class="btn btn-outline-info" target="_blank">
+        <i class="bi bi-filetype-html me-1"></i>View HTML Report
+    </a>
+    {% endif %}
+    <a href="/results/{{ filename }}/download" class="btn btn-outline-primary">
+        <i class="bi bi-download me-1"></i>Download CSV
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var loadingEl = document.getElementById('equityCurveLoading');
+    var errorEl = document.getElementById('equityCurveError');
+    var errorMsgEl = document.getElementById('equityCurveErrorMsg');
+    var canvasEl = document.getElementById('equityCurveChart');
+
+    fetch('/api/results/{{ filename }}/equity-curve')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            loadingEl.style.display = 'none';
+
+            if (data.error) {
+                errorMsgEl.textContent = data.error;
+                errorEl.classList.remove('d-none');
+                return;
+            }
+
+            canvasEl.style.display = 'block';
+            var ctx = canvasEl.getContext('2d');
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Equity ($)',
+                        data: data.equity,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        fill: true,
+                        tension: 0.1,
+                        pointBackgroundColor: data.colors,
+                        pointRadius: 5,
+                        pointHoverRadius: 8
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    var profit = data.profits[context.dataIndex];
+                                    var eq = context.parsed.y;
+                                    if (context.dataIndex === 0) {
+                                        return 'Starting Equity: $' + eq.toLocaleString();
+                                    }
+                                    var sign = profit >= 0 ? '+' : '';
+                                    return 'Equity: $' + eq.toLocaleString() + ' (' + sign + '$' + profit.toLocaleString() + ')';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            title: { display: true, text: 'Equity ($)' },
+                            ticks: {
+                                callback: function(v) { return '$' + v.toLocaleString(); }
+                            }
+                        },
+                        x: {
+                            title: { display: true, text: 'Trade #' }
+                        }
+                    }
+                }
+            });
+        })
+        .catch(function(err) {
+            loadingEl.style.display = 'none';
+            errorMsgEl.textContent = 'Failed to load equity curve: ' + err.message;
+            errorEl.classList.remove('d-none');
+        });
+});
+</script>
+{% endblock %}

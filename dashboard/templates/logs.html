@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Logs — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item active">Logs</li>
+    </ol>
+</nav>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="d-flex flex-wrap align-items-center justify-content-between mb-4 gap-2">
+    <div>
+        <h2 class="fw-bold mb-1">Application Logs</h2>
+        <p class="text-muted mb-0">
+            <i class="bi bi-file-earmark-text me-1"></i>
+            <span class="text-mono">ole_backtest.log</span>
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="/logs" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+        </a>
+        <button id="btnScrollTop" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-up me-1"></i>Scroll to Top
+        </button>
+    </div>
+</div>
+
+<!-- ── Log Output ──────────────────────────────────────── -->
+<div class="card">
+    <div class="card-body p-0">
+        {% if log_content %}
+        <pre class="log-output mb-0" id="logOutput" style="max-height: 700px; overflow-y: auto; border-radius: 10px;">{{ log_content }}</pre>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-journal text-muted" style="font-size: 3rem;"></i>
+            <p class="text-muted mt-3 mb-0">No log content available.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── Back Link ───────────────────────────────────────── -->
+<div class="mt-3">
+    <a href="/" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-scroll to bottom of log
+    var logEl = document.getElementById('logOutput');
+    if (logEl) {
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Scroll to top button
+    var btnTop = document.getElementById('btnScrollTop');
+    if (btnTop && logEl) {
+        btnTop.addEventListener('click', function() {
+            logEl.scrollTop = 0;
+        });
+    }
+});
+</script>
+{% endblock %}

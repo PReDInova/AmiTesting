@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<AmiBrokerProject SchemaVersion="1">
+  <General>
+    <FormulaPath></FormulaPath>
+    <FormulaContent></FormulaContent>
+    <IncludeFilter>*</IncludeFilter>
+    <ExcludeFilter></ExcludeFilter>
+    <ApplyTo>0</ApplyTo>
+    <RangeType>0</RangeType>
+    <RangeFrom>0</RangeFrom>
+    <RangeTo>0</RangeTo>
+    <Periodicity>0</Periodicity>
+  </General>
+  <Backtest>
+    <InitialEquity>100000</InitialEquity>
+    <Commissions>0</Commissions>
+    <MarginRequirement>10</MarginRequirement>
+    <PointValue>100</PointValue>
+    <TickSize>0.10</TickSize>
+    <AllowSameBarExit>0</AllowSameBarExit>
+    <ActivateStops>0</ActivateStops>
+    <ReverseSignalForcesExit>1</ReverseSignalForcesExit>
+    <MaxOpenPositions>1</MaxOpenPositions>
+  </Backtest>
+</AmiBrokerProject>

@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}AFL Editor — AmiTesting{% endblock %}
+
+{% block extra_head %}
+<!-- CodeMirror 5 -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/dracula.min.css">
+<style>
+    .CodeMirror {
+        border-radius: 8px;
+        font-size: 0.9rem;
+        border: 1px solid rgba(0,0,0,0.1);
+    }
+    .editor-toolbar {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item active">AFL Editor</li>
+    </ol>
+</nav>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="mb-4">
+    <h2 class="fw-bold mb-1">AFL Strategy Editor</h2>
+    <p class="text-muted mb-0">
+        <i class="bi bi-file-earmark-code me-1"></i>
+        <span class="text-mono">{{ afl_path }}</span>
+    </p>
+</div>
+
+<!-- ── Editor ──────────────────────────────────────────── -->
+<div class="card mb-3">
+    <div class="card-body p-0">
+        <form id="afl-form" method="POST" action="/afl/save">
+            <textarea name="afl_content" id="afl-code" style="display:none;">{{ afl_content }}</textarea>
+        </form>
+    </div>
+</div>
+
+<!-- ── Button Row ──────────────────────────────────────── -->
+<div class="editor-toolbar mb-4">
+    <button type="submit" form="afl-form" class="btn btn-success">
+        <i class="bi bi-save me-1"></i>Save &amp; Rebuild APX
+    </button>
+    <a href="/afl" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+    </a>
+</div>
+
+<!-- ── Info Card ───────────────────────────────────────── -->
+<div class="callout-blue">
+    <i class="bi bi-info-circle me-1"></i>
+    Changes are saved to <code>{{ afl_path }}</code> and the APX project file is automatically rebuilt.
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- CodeMirror core + addons -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/selection/active-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var editor = CodeMirror.fromTextArea(document.getElementById('afl-code'), {
+        mode: 'text/x-csrc',
+        theme: 'dracula',
+        lineNumbers: true,
+        matchBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        lineWrapping: true
+    });
+    editor.setSize(null, 500);
+
+    // Sync editor content back to the hidden textarea before form submission
+    document.getElementById('afl-form').addEventListener('submit', function() {
+        editor.save();
+    });
+
+    // Keyboard shortcut: Ctrl+S / Cmd+S to save
+    editor.setOption('extraKeys', {
+        'Ctrl-S': function() {
+            editor.save();
+            document.getElementById('afl-form').submit();
+        },
+        'Cmd-S': function() {
+            editor.save();
+            document.getElementById('afl-form').submit();
+        }
+    });
+});
+</script>
+{% endblock %}

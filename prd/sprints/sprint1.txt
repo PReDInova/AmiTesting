@@ -1,0 +1,180 @@
+Sprint 1 Plan: OLE Interface Verification with Simple /GC Futures Test
+Hey Preston (@PDinova), great to kick off development on this! With the sunny weather in Dale City, Virginia this morning (around 50°F and clear—perfect for focused coding), let's plan Sprint 1 as the foundation for your AI agent system. Based on the updated PRD (v1.1), this sprint aligns with Phase 1 (MVP Development) but narrows to an extremely simple test of /GC futures using the GCZ25 database/symbol. The goal is to verify the OLE interface works end-to-end: loading the database, implementing a basic AFL strategy, running a backtest, and exporting results. This will confirm integration before expanding to full agents and iterations.
+We'll keep it lightweight—no full agents yet, just a minimal Python script to test OLE. Success here paves the way for GitHub branching, Claude code gen, and strategy refinement in later sprints. I'll structure this as a standard Agile sprint plan: objectives, scope, tasks, timeline, and risks. Assume a 1-2 week sprint (adjustable based on your availability).
+Sprint Objectives
+
+Primary: Validate OLE Automation with AmiBroker by running a simple backtest on GCZ25 (/GC futures data). Metrics: Successful load, run, and export without errors.
+Secondary: Set up GitHub repo for version control; commit initial code and results to a main branch.
+Definition of Done (DoD): OLE script runs a basic MA crossover strategy on GCZ25, exports results (e.g., Sharpe >0 for basic viability), and pushes to GitHub. No crashes or unhandled exceptions.
+Success Criteria:
+OLE methods (e.g., LoadDatabase, Run(2)) return expected values.
+Backtest completes with explainable output (e.g., trade list CSV).
+GitHub repo initialized with at least 3 commits.
+
+
+Scope
+
+In Scope:
+Simple AFL: Basic moving average crossover (e.g., Buy on 10-period MA > 50-period MA; Sell on cross below) on GCZ25 daily data.
+Database: Your preloaded GCZ25 (assume it's in AmiBroker format; test on historical futures data for /GC, like gold contracts).
+OLE Focus: Load DB, open .apx with AFL, run portfolio backtest, wait for IsBusy=False, export HTML/CSV.
+GitHub: Create repo, commit script/AFL/.apx, push to main.
+
+Out of Scope (For Later Sprints)**:
+Full agents (e.g., Generation, Explanation).
+Optimizations, iterations, or XAI.
+Error handling beyond basic try-except.
+Mac/Parallels setup (assume you have Windows VM ready; we can troubleshoot if needed).
+Advanced /GC analysis (e.g., volatility filters)—keep it extremely simple.
+
+
+User Stories
+Prioritized for this sprint (MoSCoW: All Must-Have for MVP verification).
+
+As a developer, I want to set up a GitHub repo, so I can track code changes from the start.
+Acceptance: Repo created (private), initial commit with README.md describing sprint goal.
+
+As a quant trader, I want a simple Python script to load the GCZ25 database via OLE, so I can confirm data access.
+Acceptance: Script loads DB without errors; logs success.
+
+As a quant trader, I want to generate and embed a basic AFL strategy in a .apx file, so I can test implementation.
+Acceptance: .apx created with MA crossover AFL; committed to GitHub.
+
+As a quant trader, I want to run a backtest on GCZ25 via OLE, so I can verify execution and results export.
+Acceptance: Backtest runs, exports CSV/HTML with metrics (e.g., profit factor, drawdown); results pushed to GitHub.
+
+
+Tasks and Breakdown
+Use a Kanban-style board (e.g., GitHub Projects) for tracking. Estimated effort in hours (total ~20-30 hours over 1-2 weeks).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Task IDDescriptionAssigneeEffort (hrs)DependenciesDeliverablesT1Initialize GitHub repo: Create private repo "trading-agent-system", add .gitignore for Python, commit README with sprint overview.You/Me (I can provide template)1NoneRepo URL; initial commit.T2Install/setup environment in Windows VM: Python 3.12+, win32com, pandas; confirm AmiBroker Pro installed with GCZ25 DB preloaded.You2NoneEnvironment ready; test import win32com.T3Write basic AFL for MA crossover: Hardcode simple Buy/Sell rules for /GC (GCZ25 symbol).You/Claude-assisted2T2AFL string/file; explainable comments.T4Create/modify .apx template: Use XML to embed AFL, set to GCZ25 symbol, daily interval, basic settings (e.g., no commissions).You3T3.apx file; commit to repo.T5Develop Python OLE script: Dispatch Broker.Application, LoadDatabase, Open .apx, Run(2) backtest, poll IsBusy, Export results.You/Me (code example below)5T2, T4Script.py; handles basic errors.T6Test script locally: Run on GCZ25, verify backtest completes (e.g., >0 trades).You4T5Logs/screenshots; exported CSV/HTML.T7Commit and push changes: Add script, AFL, .apx, results; create "sprint1-ole-test" branch if needed for isolation.You1T6Pushed to GitHub; branch merged to main.T8Review and document: Log any OLE issues (e.g., syntax errors); update README with findings.You/Me2T7Updated docs; sprint retrospective notes.
+Example Starter Code for T5 (Python OLE Script)
+Here's a minimal script to get you started—run in your Windows VM. Adapt paths to your setup.
+Pythonimport win32com.client
+import time
+import xml.etree.ElementTree as ET  # For .apx mod if needed
+
+try:
+    ab = win32com.client.Dispatch("Broker.Application")
+    ab.LoadDatabase("C:\\Path\\To\\Your\\GCZ25Database")  # Replace with your DB path
+    
+    # Optional: Modify .apx for GCZ25
+    tree = ET.parse("base.apx")  # Assume a template .apx
+    # Set symbol to GCZ25, embed simple AFL
+    formula_node = tree.find(".//Formula")
+    formula_node.text = """
+    // Simple MA Crossover for /GC (GCZ25)
+    fastMA = MA(Close, 10);
+    slowMA = MA(Close, 50);
+    Buy = Cross(fastMA, slowMA);
+    Sell = Cross(slowMA, fastMA);
+    """
+    tree.write("gcz25_test.apx")
+    
+    analysis_doc = ab.AnalysisDocs.Open("gcz25_test.apx")
+    if analysis_doc:
+        success = analysis_doc.Run(2)  # Portfolio Backtest (simple, even for single symbol)
+        if success:
+            while analysis_doc.IsBusy:
+                time.sleep(0.5)
+            analysis_doc.Export("gcz25_results.html")
+            print("Test complete: Results exported.")
+        else:
+            print("Run failed: Check AFL syntax or settings.")
+        analysis_doc.Close()
+    ab.Quit()
+except Exception as e:
+    print(f"OLE Error: {e}")
+
+Test: Run this; expect a HTML file with basic metrics. If syntax errors (e.g., in AFL), it should fail at Run()—log and fix.
+
+Timeline
+
+Sprint Start: Today (Feb 7, 2026).
+Daily Standups: Quick check-ins via chat (e.g., "What did you do? Blockers?").
+Mid-Sprint Review (Day 5): Test OLE load/run; adjust if issues.
+Sprint End (Day 10): Demo results; retrospective (what worked? OLE stable?).
+Tools: GitHub for tracking (issues for bugs); Claude for code refinements if needed.
+
+Risks and Mitigations
+
+Risk: OLE Errors (e.g., COM failures on Mac/Parallels): Mitigate by testing in VM first; use ab.Visible=True for UI debugging.
+Risk: GCZ25 Data Issues (e.g., incomplete historicals): Assume preloaded; fallback to sample data if needed.
+Risk: Time Overrun: Keep simple—escalate if setup takes >4 hours.
+Assumptions: You have GCZ25 data ready; Windows VM configured.

@@ -1,0 +1,59 @@
+<?xml version='1.0' encoding='ISO-8859-1'?>
+<AmiBrokerProject SchemaVersion="1">
+  <General>
+    <FormulaPath />
+    <FormulaContent>// Simple Moving Average Crossover Strategy for /GC (GCZ25)
+// Sprint 1: OLE Interface Verification Test
+//
+// Strategy: Buy when fast MA crosses above slow MA
+//           Sell when slow MA crosses above fast MA
+//
+// Parameters:
+//   Fast MA Period: 10
+//   Slow MA Period: 50
+//   Applied to: Close price, Daily bars
+
+// Moving Average calculations
+fastMA = MA(Close, 10);
+slowMA = MA(Close, 50);
+
+// Entry/Exit signals
+Buy = Cross(fastMA, slowMA);
+Sell = Cross(slowMA, fastMA);
+
+// Position sizing - simple fixed
+SetPositionSize(1, spsShares);
+
+// Remove excess signals
+Buy = ExRem(Buy, Sell);
+Sell = ExRem(Sell, Buy);
+
+// Plot for visual verification
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(fastMA, "Fast MA(10)", colorGreen, styleLine);
+Plot(slowMA, "Slow MA(50)", colorRed, styleLine);
+
+// Mark buy/sell signals on chart
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);
+PlotShapes(Sell * shapeDownArrow, colorRed, 0, High);
+</FormulaContent>
+    <IncludeFilter>*</IncludeFilter>
+    <ExcludeFilter />
+    <ApplyTo>0</ApplyTo>
+    <RangeType>0</RangeType>
+    <RangeFrom>0</RangeFrom>
+    <RangeTo>0</RangeTo>
+    <Periodicity>0</Periodicity>
+  </General>
+  <Backtest>
+    <InitialEquity>100000</InitialEquity>
+    <Commissions>0</Commissions>
+    <MarginRequirement>10</MarginRequirement>
+    <PointValue>100</PointValue>
+    <TickSize>0.10</TickSize>
+    <AllowSameBarExit>0</AllowSameBarExit>
+    <ActivateStops>0</ActivateStops>
+    <ReverseSignalForcesExit>1</ReverseSignalForcesExit>
+    <MaxOpenPositions>1</MaxOpenPositions>
+  </Backtest>
+</AmiBrokerProject>

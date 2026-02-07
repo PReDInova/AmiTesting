@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest Status — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item active">Backtest Status</li>
+    </ol>
+</nav>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="mb-4">
+    <h2 class="fw-bold mb-1">Backtest Execution</h2>
+</div>
+
+<!-- ── Status Card ─────────────────────────────────────── -->
+{% if state.running %}
+<!-- Running -->
+<div class="card mb-4 border-0" style="border-left: 4px solid #0d6efd !important;">
+    <div class="card-body d-flex align-items-center gap-3">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Running...</span>
+        </div>
+        <div>
+            <h5 class="fw-bold mb-1 text-primary">Backtest is running...</h5>
+            {% if state.started_at %}
+                <p class="text-muted mb-0">
+                    Started at <strong>{{ state.started_at }}</strong>
+                </p>
+            {% endif %}
+            <small class="text-muted">This page will refresh automatically.</small>
+        </div>
+    </div>
+</div>
+
+{% elif state.success == true %}
+<!-- Completed successfully -->
+<div class="callout-green mb-4 d-flex align-items-start gap-3">
+    <i class="bi bi-check-circle-fill text-success fs-3"></i>
+    <div>
+        <h5 class="fw-bold mb-1 text-success">Backtest completed successfully</h5>
+        {% if state.finished_at %}
+            <p class="text-muted mb-1">Finished at <strong>{{ state.finished_at }}</strong></p>
+        {% endif %}
+        <a href="/" class="btn btn-success btn-sm mt-1">
+            <i class="bi bi-eye me-1"></i>View Results
+        </a>
+    </div>
+</div>
+
+{% elif state.success == false %}
+<!-- Failed -->
+<div class="callout-red mb-4 d-flex align-items-start gap-3">
+    <i class="bi bi-x-circle-fill text-danger fs-3"></i>
+    <div>
+        <h5 class="fw-bold mb-1 text-danger">Backtest failed</h5>
+        {% if state.error %}
+            <p class="mb-1"><strong>Error:</strong> {{ state.error }}</p>
+        {% endif %}
+        {% if state.finished_at %}
+            <p class="text-muted mb-0">Finished at <strong>{{ state.finished_at }}</strong></p>
+        {% endif %}
+    </div>
+</div>
+
+{% else %}
+<!-- No backtest run yet -->
+<div class="card mb-4">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-hourglass text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3 mb-0">No backtest has been run yet. Click "Run Backtest" to get started.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Log Output ──────────────────────────────────────── -->
+{% if log_content %}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-terminal me-2"></i>Backtest Log Output</span>
+        <small class="text-muted">{{ log_content.split('\n')|length }} lines</small>
+    </div>
+    <div class="card-body p-0">
+        <pre class="log-output mb-0" id="logOutput" style="max-height: 500px; overflow-y: auto; border-radius: 0 0 10px 10px;">{{ log_content }}</pre>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Action Buttons ──────────────────────────────────── -->
+<div class="d-flex flex-wrap gap-2">
+    <a href="/" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
+    </a>
+    {% if not state.running %}
+    <form method="POST" action="/backtest/run" class="d-inline">
+        <button type="submit" class="btn btn-success">
+            <i class="bi bi-play-fill me-1"></i>Run Again
+        </button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Auto-scroll log to bottom
+    var logEl = document.getElementById('logOutput');
+    if (logEl) {
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Auto-refresh while backtest is running
+    {% if state.running %}
+    setTimeout(function() {
+        window.location.reload();
+    }, 3000);
+    {% endif %}
+});
+</script>
+{% endblock %}

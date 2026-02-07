@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Environment / secrets
+.env
+*.key
+credentials.json
+
+# Logs (keep structure, ignore contents)
+logs/*.log
+
+# Results (keep structure, ignore generated output)
+results/*.html
+results/*.csv
+!results/results.csv
+results/staged/
+results/*.status.json
+
+# AmiBroker generated files
+*.apx.bak
+
+# Pytest
+.pytest_cache/
+
+# Claude Code
+.claude/
+
+# Plan files
+*.md.plan

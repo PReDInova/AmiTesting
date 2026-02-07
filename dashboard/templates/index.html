@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="mb-4">
+    <h2 class="fw-bold mb-1">Dashboard</h2>
+    <p class="text-muted mb-0">Review and manage backtest results</p>
+</div>
+
+<!-- ── DB Warning ──────────────────────────────────────── -->
+{% if not db_configured %}
+<div class="callout-amber mb-4 d-flex align-items-start gap-2">
+    <i class="bi bi-exclamation-triangle-fill text-warning fs-5 mt-1"></i>
+    <div>
+        <strong>AmiBroker database not configured.</strong><br>
+        Set <code>AMIBROKER_DB_PATH</code> in <code>config/settings.py</code> to enable backtesting.
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Quick Actions ───────────────────────────────────── -->
+<div class="row g-3 mb-5">
+    <!-- Edit Strategy -->
+    <div class="col-md-4">
+        <a href="/afl" class="card action-card h-100 text-decoration-none">
+            <div class="card-body">
+                <div class="action-icon"><i class="bi bi-code-slash"></i></div>
+                <h6>Edit Strategy</h6>
+                <p class="text-muted small mb-0">
+                    {% if afl_filename is defined and afl_filename %}
+                        <span class="text-mono">{{ afl_filename }}</span>
+                    {% else %}
+                        Open the AFL code editor
+                    {% endif %}
+                </p>
+            </div>
+        </a>
+    </div>
+
+    <!-- Run Backtest -->
+    <div class="col-md-4">
+        <div class="card action-card h-100">
+            <div class="card-body">
+                <div class="action-icon"><i class="bi bi-play-circle"></i></div>
+                <h6>Run Backtest</h6>
+                <p class="text-muted small mb-2">Execute the current strategy</p>
+                <form method="POST" action="/backtest/run">
+                    <button type="submit" class="btn btn-success btn-sm px-4"
+                        {% if not db_configured %}disabled title="Configure AmiBroker database first"{% endif %}>
+                        <i class="bi bi-play-fill me-1"></i>Run
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- View Logs -->
+    <div class="col-md-4">
+        <a href="/logs" class="card action-card h-100 text-decoration-none">
+            <div class="card-body">
+                <div class="action-icon"><i class="bi bi-journal-text"></i></div>
+                <h6>View Logs</h6>
+                <p class="text-muted small mb-0">Check application and backtest logs</p>
+            </div>
+        </a>
+    </div>
+</div>
+
+<!-- ── Results Section ─────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Backtest Results</h4>
+    {% if result_files %}
+    <span class="badge bg-secondary">{{ result_files|length }} result{{ 's' if result_files|length != 1 }}</span>
+    {% endif %}
+</div>
+
+{% if not result_files %}
+<div class="card">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3 mb-0">No backtest results yet. Run a backtest to get started.</p>
+    </div>
+</div>
+{% else %}
+<div class="row g-3">
+    {% for rf in result_files %}
+    {% if get_strategy_info is defined and get_strategy_info %}
+        {% set info = get_strategy_info(rf.name) %}
+    {% else %}
+        {% set info = None %}
+    {% endif %}
+    <div class="col-md-6 col-lg-4">
+        <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between mb-2">
+                    <div>
+                        <h6 class="fw-bold mb-0">
+                            {% if info and info.name %}
+                                {{ info.name }}
+                            {% else %}
+                                {{ rf.name }}
+                            {% endif %}
+                        </h6>
+                        <small class="text-muted text-mono">{{ rf.name }}</small>
+                    </div>
+                    {% if rf.status == "approved" %}
+                        <span class="badge badge-approved">Approved</span>
+                    {% elif rf.status == "rejected" %}
+                        <span class="badge badge-rejected">Rejected</span>
+                    {% elif rf.status == "staged" %}
+                        <span class="badge badge-staged">Staged</span>
+                    {% else %}
+                        <span class="badge badge-pending">Pending</span>
+                    {% endif %}
+                </div>
+
+                {% if info and info.symbol %}
+                <span class="badge bg-light text-dark border mb-2" style="width: fit-content;">
+                    <i class="bi bi-tag me-1"></i>{{ info.symbol }}
+                </span>
+                {% endif %}
+
+                {% if info and info.summary %}
+                <p class="text-muted small mb-2">{{ info.summary }}</p>
+                {% endif %}
+
+                <div class="mt-auto pt-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">
+                            {% if rf.size_kb is defined %}{{ rf.size_kb }} KB{% endif %}
+                            {% if rf.modified_date is defined %}&middot; {{ rf.modified_date }}{% endif %}
+                        </small>
+                        <a href="/results/{{ rf.name }}" class="btn btn-sm btn-outline-primary">
+                            View Details <i class="bi bi-arrow-right ms-1"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

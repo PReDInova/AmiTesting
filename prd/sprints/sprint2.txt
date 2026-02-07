@@ -1,0 +1,197 @@
+Sprint 2 Plan: Dashboard Feature Expansion — AFL Editor, Equity Curve, Run Backtest, UI Polish
+Hey Preston (@PDinova), Sprint 1 is in the books — the OLE pipeline works end-to-end, the dashboard can display results and stage/approve/reject them, and we have a solid Flask + Jinja foundation to build on. Sprint 2 is about making the dashboard actually useful day-to-day: editing strategies without leaving the browser, visualizing performance at a glance, kicking off backtests on demand, and cleaning up the UI so it feels like a real tool rather than a prototype. Everything here builds directly on what already exists in dashboard/app.py and run.py — no new infrastructure, just feature work.
+
+Sprint 2 is a 1-week sprint. We are keeping scope tight because each of these four features touches different parts of the stack (frontend JS, backend Flask routes, background threading, CSS/layout). Better to ship four solid features than eight half-finished ones.
+
+
+Sprint Objectives
+
+Primary: Deliver four user-facing features — AFL code viewer/editor, equity curve chart, run-backtest-from-dashboard, and UI polish — that turn the dashboard from a read-only results viewer into an interactive development workbench.
+Secondary: Establish frontend patterns (CodeMirror integration, Chart.js usage, background task handling) that future sprints can reuse for more advanced features like multi-strategy comparison and agent-generated code review.
+Definition of Done (DoD): All four features are functional in the browser, tested manually against a real backtest result set, and committed to the repo. No regressions to existing stage/approve/reject workflow. Pages load without JS console errors.
+
+
+Scope
+
+In Scope:
+- AFL code viewer/editor using CodeMirror (CDN-loaded, no npm build step) embedded on a new /afl route. Read the current AFL file from disk, display it with syntax highlighting, allow edits, and on save re-run apx_builder.build_apx() to rebuild the .apx project file.
+- Equity curve chart on the results detail page using Chart.js (CDN). Plot cumulative portfolio equity over the trade sequence. Green markers on winning trades, red on losing trades. Derived from the existing parsed CSV data — no new data sources needed.
+- "Run Backtest" button on the dashboard index page that POSTs to a new /run endpoint. The backend spawns run.py main() in a background thread, redirects to a /run/status page that auto-refreshes every 3 seconds and streams the log file content. Shows a spinner while running, final status when done.
+- UI polish pass: Bootstrap Icons via CDN, improved card components on index page, better typography (system font stack, tighter line heights), breadcrumb navigation on detail/log/AFL pages, consistent color scheme, responsive tweaks.
+
+Out of Scope (For Later Sprints):
+- Multi-file AFL management or strategy library.
+- Real-time WebSocket log streaming (we use polling for now — simpler, good enough).
+- User authentication or role-based access.
+- Charting beyond equity curve (drawdown chart, trade distribution histogram — nice to have but not Sprint 2).
+- AFL syntax validation or linting in the editor.
+- Deployment to a remote server (still running localhost).
+
+
+User Stories
+Prioritized for this sprint (MoSCoW: all Must-Have).
+
+US-1: AFL Code Viewer/Editor
+As a quant developer, I want to view and edit my AFL strategy code directly in the dashboard, so I can iterate on strategy logic without switching to a separate text editor and manually rebuilding the .apx file.
+Acceptance Criteria:
+- /afl route displays the current AFL file content in a CodeMirror editor with syntax highlighting (C-like mode works well for AFL).
+- "Save & Rebuild" button writes changes back to the AFL file on disk and calls build_apx() to regenerate the .apx.
+- Success/failure flash message after save.
+- Read-only fallback if the AFL file path is not configured or file is missing.
+
+US-2: Equity Curve Chart
+As a quant trader reviewing backtest results, I want to see a visual equity curve on the results detail page, so I can quickly assess the strategy's performance trajectory without scanning a table of numbers.
+Acceptance Criteria:
+- Chart.js line chart appears on the results detail page below the metrics summary.
+- X-axis is trade number (or date if available), Y-axis is cumulative profit/equity.
+- Data points are color-coded: green for trades that were profitable, red for trades that lost money.
+- Chart renders from the same parsed CSV data already loaded by parse_results_csv() — no additional backend work beyond passing the right data to the template.
+- Graceful fallback (hidden chart div, short message) if no profit column exists in the CSV.
+
+US-3: Run Backtest from Dashboard
+As a quant developer, I want to trigger a full backtest run from the dashboard UI, so I can test my AFL changes immediately without opening a terminal and running python run.py manually.
+Acceptance Criteria:
+- "Run Backtest" button on the index page (and optionally on the AFL editor page after saving).
+- POST /run endpoint launches run.py's main() function in a background thread.
+- Redirects to /run/status page showing current status (running/completed/failed) and the tail of the log file.
+- Status page auto-refreshes every 3 seconds while the backtest is running, stops refreshing when done.
+- Prevents launching a second backtest while one is already running (button disabled or returns a flash warning).
+- On completion, provides a link back to the results index page.
+
+US-4: UI Polish
+As a dashboard user, I want a cleaner, more professional-looking interface, so the tool feels polished and is easier to navigate.
+Acceptance Criteria:
+- Bootstrap Icons loaded via CDN; icons added to navigation links, buttons, and status badges.
+- Cards on the index page redesigned: subtle shadows, hover effects, clearer status indicators (colored badges instead of plain text).
+- Breadcrumb navigation on all subpages (e.g., Home > Results > results.csv).
+- Consistent color palette: primary blue for actions, green for approved/success, red for rejected/failure, amber for pending.
+- System font stack applied (no external font downloads).
+- Footer with version/sprint info.
+- All pages remain responsive down to tablet width.
+
+
+Tasks and Breakdown
+Estimated effort: ~30-35 hours over 1 week. Use GitHub issues or a Kanban board for tracking.
+
+T1 — Add CodeMirror to AFL editor page (Frontend)
+  Assignee: You/Claude-assisted
+  Effort: 4 hrs
+  Dependencies: None
+  Deliverables: New template templates/afl_editor.html with CodeMirror loaded from CDN (codemirror.net), C-like syntax mode, dark theme (dracula or material), textarea fallback.
+  Notes: CodeMirror 5 via CDN is simplest — no build tools. Load codemirror.min.js, clike.min.js for syntax mode, and a theme CSS file.
+
+T2 — AFL editor backend routes (Backend)
+  Assignee: You/Claude-assisted
+  Effort: 3 hrs
+  Dependencies: T1
+  Deliverables: Two new routes in app.py:
+    GET /afl — reads AFL_STRATEGY_FILE from disk, renders afl_editor.html with the content.
+    POST /afl/save — writes the submitted code back to AFL_STRATEGY_FILE, calls build_apx(), flashes success/error, redirects back to /afl.
+  Notes: Use config.settings.AFL_STRATEGY_FILE for the path. Wrap build_apx() in try/except so a bad AFL save does not crash the dashboard.
+
+T3 — Equity curve chart on results detail page (Frontend + Template)
+  Assignee: You/Claude-assisted
+  Effort: 4 hrs
+  Dependencies: None
+  Deliverables: Updated templates/results_detail.html with a Chart.js canvas. JavaScript block at the bottom that reads the trade data (passed as JSON via Jinja's tojson filter), computes cumulative equity, and renders a line chart. Green/red point colors based on per-trade profit sign.
+  Notes: Chart.js 4.x via CDN. Keep the chart in a card component below the metrics summary. Add a "No equity data available" message if the profit column is missing.
+
+T4 — Run Backtest endpoint and background thread (Backend)
+  Assignee: You/Claude-assisted
+  Effort: 5 hrs
+  Dependencies: None
+  Deliverables: New routes in app.py:
+    POST /run — spawns a background thread running run.main(), stores status in a module-level dict (or simple global), redirects to /run/status.
+    GET /run/status — renders templates/run_status.html showing status (queued/running/completed/failed), elapsed time, and latest log file content.
+    GET /api/run/status — JSON endpoint returning the current run state for AJAX polling.
+  Notes: Use Python's threading module. Guard against concurrent runs with a simple lock or flag. Read the log file from LOGS_DIR / "ole_backtest.log" — same file the logs page already uses. Auto-refresh via a <meta http-equiv="refresh" content="3"> tag that is only rendered while status is "running"; or use a small JS setInterval that calls the JSON endpoint and updates the page.
+
+T5 — Run status page template (Frontend)
+  Assignee: You/Claude-assisted
+  Effort: 3 hrs
+  Dependencies: T4
+  Deliverables: New template templates/run_status.html with:
+    - Spinner animation while running.
+    - Status badge (running = blue spinner, completed = green check, failed = red X).
+    - Scrollable log output area (pre-formatted, auto-scrolls to bottom).
+    - "Back to Results" link shown on completion.
+    - "Run Backtest" button disabled/hidden while a run is active.
+
+T6 — UI polish: Bootstrap Icons, cards, typography (Frontend)
+  Assignee: You/Claude-assisted
+  Effort: 5 hrs
+  Dependencies: None
+  Deliverables: Updated base.html (or equivalent layout template) and all existing templates:
+    - Bootstrap Icons CDN link added to <head>.
+    - Icons on nav links, buttons, badges.
+    - Card redesign on index.html: box-shadow, border-left color based on status, hover lift effect.
+    - System font stack in CSS.
+    - Tighter spacing, improved heading hierarchy.
+
+T7 — Breadcrumb navigation and footer (Frontend)
+  Assignee: You/Claude-assisted
+  Effort: 2 hrs
+  Dependencies: T6
+  Deliverables: Breadcrumb component on results_detail.html, afl_editor.html, logs.html, run_status.html. Consistent footer across all pages showing "AmiTesting Dashboard | Sprint 2 | v0.2.0".
+
+T8 — Manual integration testing and bug fixes (QA)
+  Assignee: You
+  Effort: 4 hrs
+  Dependencies: T1-T7
+  Deliverables: Test all four features against a real (or simulated) GCZ25 backtest result set:
+    - Edit AFL, save, verify .apx rebuilds.
+    - View equity curve on results detail page, confirm green/red dots.
+    - Run backtest from dashboard, watch status page, confirm results appear.
+    - Navigate all pages, check breadcrumbs, icons, responsive layout.
+    - Fix any bugs found; commit.
+  Notes: No automated tests required for Sprint 2 (Sprint 3 will add Playwright/Selenium smoke tests for the dashboard). Manual testing is DoD.
+
+
+Timeline
+
+Sprint Start: Friday, February 7, 2026
+Mid-Sprint Check-in (Day 3): Tuesday, February 10, 2026 — T1-T4 should be code-complete. Test AFL editor and equity curve locally.
+Feature Freeze (Day 5): Thursday, February 12, 2026 — All features merged. T8 integration testing begins.
+Sprint End: Friday, February 13, 2026 — Demo, retrospective, tag v0.2.0.
+
+Daily rhythm: Quick standup check-in (async via chat). Push working code at end of each day. Do not let tasks pile up un-committed.
+
+
+Risks and Mitigations
+
+Risk: CodeMirror CDN unavailable or version incompatibility.
+Mitigation: Pin a specific CDN version (e.g., cdnjs 5.65.x). Download and vendor the files locally as a fallback. CodeMirror 5 is extremely stable.
+
+Risk: Background thread for backtest run causes Flask instability (e.g., thread safety issues with module-level state).
+Mitigation: Use a simple threading.Lock to guard the run-state dict. Flask's development server is single-process but multi-threaded by default — this is fine for a local dev tool. If issues arise, fall back to subprocess.Popen instead of threading (spawn run.py as a child process and poll its exit code).
+
+Risk: Chart.js equity curve looks wrong due to unexpected CSV column formats or missing profit data.
+Mitigation: The parse_results_csv() function already handles column detection with fallbacks. Pass the computed cumulative equity as a simple list to the template. If no profit column is found, hide the chart gracefully with a message. Test with the actual results.csv from Sprint 1.
+
+Risk: UI polish scope creep — "just one more tweak" eats into feature development time.
+Mitigation: Timebox T6 and T7 to a combined 7 hours max. Stick to the specific changes listed (icons, cards, breadcrumbs, typography). Save anything beyond that for a future polish sprint. Good enough beats perfect.
+
+Risk: AFL save overwrites the file with broken code, no undo.
+Mitigation: Before writing, copy the current AFL file to a .bak backup (e.g., strategy.afl.bak). This is a one-line addition to the save route. Full version history comes from Git — remind user to commit before major edits.
+
+
+Dependencies
+
+Internal:
+- config.settings.AFL_STRATEGY_FILE must point to a valid .afl file path. Already configured in Sprint 1.
+- config.settings.LOGS_DIR must exist and be writable. Already set up.
+- run.py main() function must be importable and callable from app.py. Already works — just need to import it.
+- apx_builder.build_apx() must be callable with the current settings. Already tested in Sprint 1.
+
+External (CDN):
+- CodeMirror 5.x — https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/
+- Chart.js 4.x — https://cdn.jsdelivr.net/npm/chart.js
+- Bootstrap Icons 1.11.x — https://cdn.jsdelivr.net/npm/bootstrap-icons/
+
+No new Python packages required. Flask, pandas, and the existing dependencies cover everything. If we switch from threading to subprocess for the backtest runner, that is stdlib — no pip install needed.
+
+
+Notes for Claude Code Assistance
+When implementing, start with T4 (Run Backtest backend) and T2 (AFL editor backend) since those are the highest-risk backend tasks. T3 (equity curve) and T6 (UI polish) are lower-risk frontend work that can be done in parallel. T8 (testing) is the gate — nothing ships until it passes.
+
+Let's build it.

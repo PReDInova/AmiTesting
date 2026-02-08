@@ -1,34 +1,45 @@
-// Simple Moving Average Crossover Strategy for /GC (GCZ25)
-// Sprint 1: OLE Interface Verification Test
+// SMA Crossover Strategy for /GC Tick Data (Asian Session)
 //
-// Strategy: Buy when fast MA crosses above slow MA
-//           Sell when slow MA crosses above fast MA
+// Aggregates tick data into 1-minute bars, then applies a fast/slow
+// SMA crossover.  Designed for Gold futures tick data.
 //
 // Parameters:
-//   Fast MA Period: 10
-//   Slow MA Period: 50
-//   Applied to: Close price, Daily bars
+//   Timeframe: 1-minute (in1Minute)
+//   Fast MA Period: 10  (10-minute SMA)
+//   Slow MA Period: 30  (30-minute SMA)
 
-// Moving Average calculations
+// Aggregate ticks into 1-minute bars for cleaner signals
+TimeFrameSet(in1Minute);
+
 fastMA = MA(Close, 10);
-slowMA = MA(Close, 50);
+slowMA = MA(Close, 30);
 
-// Entry/Exit signals
-Buy = Cross(fastMA, slowMA);
-Sell = Cross(slowMA, fastMA);
+buySignal  = Cross(fastMA, slowMA);
+sellSignal = Cross(slowMA, fastMA);
 
-// Position sizing - simple fixed
+// Restore to native (tick) timeframe and expand signals
+TimeFrameRestore();
+
+fastMA     = TimeFrameExpand(fastMA, in1Minute);
+slowMA     = TimeFrameExpand(slowMA, in1Minute);
+buySignal  = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+sellSignal = TimeFrameExpand(sellSignal, in1Minute, expandFirst);
+
+// Entry/Exit
+Buy  = buySignal;
+Sell = sellSignal;
+
+// Position sizing - 1 contract
 SetPositionSize(1, spsShares);
 
 // Remove excess signals
-Buy = ExRem(Buy, Sell);
+Buy  = ExRem(Buy, Sell);
 Sell = ExRem(Sell, Buy);
 
 // Plot for visual verification
-Plot(Close, "Price", colorDefault, styleCandle);
-Plot(fastMA, "Fast MA(10)", colorGreen, styleLine);
-Plot(slowMA, "Slow MA(50)", colorRed, styleLine);
+Plot(Close, "Price", colorDefault, styleLine);
+Plot(fastMA, "Fast MA(10min)", colorGreen, styleLine);
+Plot(slowMA, "Slow MA(30min)", colorRed, styleLine);
 
-// Mark buy/sell signals on chart
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);
 PlotShapes(Sell * shapeDownArrow, colorRed, 0, High);

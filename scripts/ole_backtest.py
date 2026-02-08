@@ -7,6 +7,7 @@ the results to HTML and CSV.
 """
 
 import logging
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -35,11 +36,20 @@ class OLEBacktester:
     # ------------------------------------------------------------------
 
     def connect(self) -> bool:
-        """Dispatch the AmiBroker COM object and make it visible.
+        """Launch the correct AmiBroker executable and connect via COM.
+
+        Starts the AmiBroker instance at ``AMIBROKER_EXE_PATH`` before
+        dispatching the COM object, ensuring the right installation is used
+        when multiple versions are present on the system.
 
         Returns True on success, False on failure.
         """
         try:
+            exe_path = AMIBROKER_EXE_PATH
+            logger.info("Launching AmiBroker from: %s", exe_path)
+            subprocess.Popen([exe_path])
+            time.sleep(2)  # give AmiBroker time to start and register COM
+
             logger.info("Connecting to AmiBroker via COM (%s) ...", AMIBROKER_EXE)
             self.ab = win32com.client.Dispatch(AMIBROKER_EXE)
             self.ab.Visible = 1

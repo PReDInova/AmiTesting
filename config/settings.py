@@ -29,6 +29,7 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 AMIBROKER_DB_PATH: str = r"C:\Program Files (x86)\AmiBroker\Databases\GoldAsia"
 
 AMIBROKER_EXE: str = "Broker.Application"  # COM dispatch name
+AMIBROKER_EXE_PATH: str = r"C:\Program Files (x86)\AmiBroker\Broker.exe"
 
 # ---------------------------------------------------------------------------
 # Symbol & file references

@@ -124,15 +124,16 @@ class TestFullPipelineWithMockOle:
         # Database loaded
         mock_app.LoadDatabase.assert_called_once_with(r"C:\MockDB")
 
-        # Analysis project opened and run
-        mock_app.AnalysisDocs.Open.assert_called_once_with(str(output_apx))
+        # Analysis project opened (once for validation, once for backtest)
+        assert mock_app.AnalysisDocs.Open.call_count == 2
+        mock_app.AnalysisDocs.Open.assert_called_with(str(output_apx))
         analysis_doc.Run.assert_called_once()
 
         # Results exported (HTML + CSV)
         assert analysis_doc.Export.call_count == 2
 
-        # Analysis doc closed
-        analysis_doc.Close.assert_called_once()
+        # Analysis doc closed (once after validation, once after backtest)
+        assert analysis_doc.Close.call_count == 2
 
         # Disconnect called Quit
         mock_app.Quit.assert_called_once()

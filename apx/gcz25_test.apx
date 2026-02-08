@@ -1,7 +1,7 @@
-<?xml version='1.0' encoding='ISO-8859-1'?>
+<?xml version="1.0" encoding="ISO-8859-1"?>
 <AmiBrokerProject SchemaVersion="1">
   <General>
-    <FormulaPath />
+    <FormulaPath></FormulaPath>
     <FormulaContent>// Simple Moving Average Crossover Strategy for /GC (GCZ25)
 // Sprint 1: OLE Interface Verification Test
 //
@@ -38,7 +38,7 @@ PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);
 PlotShapes(Sell * shapeDownArrow, colorRed, 0, High);
 </FormulaContent>
     <IncludeFilter>*</IncludeFilter>
-    <ExcludeFilter />
+    <ExcludeFilter></ExcludeFilter>
     <ApplyTo>0</ApplyTo>
     <RangeType>0</RangeType>
     <RangeFrom>0</RangeFrom>

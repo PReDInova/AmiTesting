@@ -75,6 +75,56 @@ class OLEBacktester:
             return False
 
     # ------------------------------------------------------------------
+    # APX / AFL Validation
+    # ------------------------------------------------------------------
+
+    def validate_apx(self, apx_path: str = None) -> tuple:
+        """Validate an APX file by attempting to open it in AmiBroker.
+
+        Must be connected first (call ``connect()`` and ``load_database()``).
+
+        Returns
+        -------
+        tuple of (bool, str)
+            ``(True, "success message")`` when AmiBroker can open the file,
+            ``(False, "reason")`` when it cannot.
+        """
+        target = apx_path or str(APX_OUTPUT)
+        logger.info("Validating APX file: %s", target)
+
+        if not Path(target).exists():
+            msg = f"APX file does not exist: {target}"
+            logger.error(msg)
+            return (False, msg)
+
+        analysis_doc = None
+        try:
+            analysis_doc = self.ab.AnalysisDocs.Open(target)
+            if analysis_doc is None:
+                msg = (
+                    f"AmiBroker rejected '{target}'. "
+                    "The file may have incorrect XML format, unsupported "
+                    "elements, or encoding issues."
+                )
+                logger.error(msg)
+                return (False, msg)
+
+            logger.info("APX validation passed: %s", target)
+            return (True, f"APX file validated successfully: {target}")
+
+        except Exception as exc:
+            msg = f"APX validation failed with COM error: {exc}"
+            logger.error(msg)
+            return (False, msg)
+
+        finally:
+            if analysis_doc is not None:
+                try:
+                    analysis_doc.Close()
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
     # Backtest execution
     # ------------------------------------------------------------------
 
@@ -184,7 +234,7 @@ class OLEBacktester:
     # ------------------------------------------------------------------
 
     def run_full_test(self, db_path: str = None, apx_path: str = None) -> bool:
-        """Orchestrate the complete workflow: connect, load, backtest, disconnect.
+        """Orchestrate the complete workflow: connect, load, validate, backtest, disconnect.
 
         Returns True when every step succeeds.
         """
@@ -194,6 +244,13 @@ class OLEBacktester:
 
             if not self.load_database(db_path):
                 return False
+
+            # Validate APX before running the backtest
+            valid, reason = self.validate_apx(apx_path)
+            if not valid:
+                logger.error("APX validation failed — aborting backtest. Reason: %s", reason)
+                return False
+            logger.info("APX validated, proceeding to backtest.")
 
             if not self.run_backtest(apx_path):
                 return False

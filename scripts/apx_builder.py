@@ -2,12 +2,15 @@
 APX Builder — Generates AmiBroker Analysis Project (.apx) files.
 
 Reads a base APX XML template, injects AFL formula content into the
-<FormulaContent> element, and writes the resulting .apx file to disk.
+<FormulaContent> element via string substitution, and writes the resulting
+.apx file to disk.  Uses raw string operations (not ElementTree) to preserve
+the exact byte format of the template — AmiBroker is strict about XML
+formatting, line endings, and quote style.
 """
 
+import re
 import sys
 import logging
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -24,6 +27,12 @@ from config.settings import (
 
 logger = logging.getLogger(__name__)
 
+# Regex to match <FormulaContent>...</FormulaContent> (including empty)
+_FORMULA_RE = re.compile(
+    r"(<FormulaContent>)(.*?)(</FormulaContent>)",
+    re.DOTALL,
+)
+
 
 # ---------------------------------------------------------------------------
 # Core function
@@ -36,6 +45,11 @@ def build_apx(
     template_apx_path: str = None,
 ) -> str:
     """Build an AmiBroker .apx project file from a template and AFL source.
+
+    Uses raw string substitution to preserve the template's exact byte
+    format (line endings, encoding, XML declaration).  This avoids the
+    format corruption that Python's ElementTree introduces on Windows
+    (single-quoted declarations, self-closing tags, CRLF normalisation).
 
     Parameters
     ----------
@@ -69,41 +83,28 @@ def build_apx(
     afl_content = afl_path.read_text(encoding="utf-8")
     logger.info("Read %d characters from AFL file.", len(afl_content))
 
-    # Parse the APX template -----------------------------------------------
+    # Read the template as raw bytes to preserve exact format ---------------
     if not template_apx_path.exists():
         raise FileNotFoundError(f"APX template not found: {template_apx_path}")
-    tree = ET.parse(template_apx_path)
-    root = tree.getroot()
+    template_raw = template_apx_path.read_text(encoding="iso-8859-1")
 
-    # Inject AFL into <FormulaContent> -------------------------------------
-    formula_content_elem = root.find(".//FormulaContent")
-    if formula_content_elem is None:
+    # Verify the template has a <FormulaContent> element --------------------
+    if not _FORMULA_RE.search(template_raw):
         raise ValueError(
             "Template XML is missing the <FormulaContent> element."
         )
-    formula_content_elem.text = afl_content
+
+    # Inject AFL into <FormulaContent> via string substitution.
+    # AmiBroker expects raw AFL text (not XML-escaped) inside this element.
+    output_content = _FORMULA_RE.sub(
+        rf"\g<1>{afl_content}\g<3>",
+        template_raw,
+    )
     logger.info("Injected AFL content into <FormulaContent>.")
 
-    # Write output APX file ------------------------------------------------
+    # Write output APX file preserving the template's encoding --------------
     output_apx_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # AmiBroker requires double-quoted XML declaration and full open/close
-    # tags (not self-closing).  Python's ElementTree uses single quotes in
-    # the declaration and collapses empty elements to self-closing form,
-    # so we write without a declaration, use short_empty_elements=False,
-    # and prepend the correct declaration manually.
-    tree.write(
-        str(output_apx_path),
-        encoding="ISO-8859-1",
-        xml_declaration=False,
-        short_empty_elements=False,
-    )
-
-    # Prepend the double-quoted XML declaration
-    raw = output_apx_path.read_bytes()
-    with open(output_apx_path, "wb") as f:
-        f.write(b'<?xml version="1.0" encoding="ISO-8859-1"?>\n')
-        f.write(raw)
+    output_apx_path.write_text(output_content, encoding="iso-8859-1")
 
     logger.info("APX file written: %s", output_apx_path)
 

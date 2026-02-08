@@ -81,10 +81,21 @@ from scripts.strategy_db import (
     init_db,
     seed_default_strategies,
     get_strategy_info,
-    upsert_strategy,
+    get_strategy_summary,
+    get_run_with_context,
+    create_strategy as db_create_strategy,
+    update_strategy as db_update_strategy,
     get_strategy as db_get_strategy,
     list_strategies as db_list_strategies,
     delete_strategy as db_delete_strategy,
+    create_version as db_create_version,
+    get_version as db_get_version,
+    list_versions as db_list_versions,
+    get_latest_version as db_get_latest_version,
+    create_run as db_create_run,
+    update_run as db_update_run,
+    get_run as db_get_run,
+    list_runs as db_list_runs,
 )
 
 init_db()
@@ -563,8 +574,12 @@ def load_afl_version(version_name: str) -> tuple:
         return (False, str(exc))
 
 
-def _run_backtest_background():
-    """Run the backtest in a background thread via run.py."""
+def _run_backtest_background(strategy_id: str = None, version_id: str = None):
+    """Run the backtest in a background thread via run.py.
+
+    Passes strategy_id and version_id to the pipeline so the correct
+    strategy/version is used and a GUID-based run record is created.
+    """
     global _backtest_state
     with _backtest_lock:
         _backtest_state["running"] = True
@@ -574,8 +589,14 @@ def _run_backtest_background():
         _backtest_state["error"] = None
 
     try:
+        cmd = [sys.executable, str(PROJECT_ROOT / "run.py")]
+        if strategy_id:
+            cmd.append(strategy_id)
+        if version_id:
+            cmd.append(version_id)
+
         result = subprocess.run(
-            [sys.executable, str(PROJECT_ROOT / "run.py")],
+            cmd,
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
@@ -606,10 +627,20 @@ def _run_backtest_background():
 
 @app.route("/")
 def index():
-    """Dashboard home -- list all result CSV files."""
+    """Dashboard home -- list all strategies with version/run counts."""
+    strategies = db_list_strategies()
+    strategy_summaries = []
+    for s in strategies:
+        summary = get_strategy_summary(s["id"])
+        if summary:
+            strategy_summaries.append(summary)
+
+    # Also keep flat file listing for any orphan CSVs not in the DB
     result_files = get_result_files()
+
     return render_template(
         "index.html",
+        strategies=strategy_summaries,
         result_files=result_files,
         get_strategy_info=get_strategy_info,
         db_configured=bool(AMIBROKER_DB_PATH),
@@ -619,7 +650,7 @@ def index():
 
 @app.route("/results/<filename>")
 def results_detail(filename: str):
-    """Detail view of a single CSV result set."""
+    """Detail view of a single CSV result set (legacy flat file route)."""
     filepath = RESULTS_DIR / filename
     if not filepath.exists() or not filepath.suffix == ".csv":
         flash(f"Result file '{filename}' not found.", "danger")
@@ -643,7 +674,118 @@ def results_detail(filename: str):
         afl_path=str(AFL_STRATEGY_FILE),
         versions=get_afl_versions(),
         db_configured=bool(AMIBROKER_DB_PATH),
+        run=None,
     )
+
+
+@app.route("/run/<run_id>")
+def run_detail(run_id: str):
+    """Detail view of a GUID-based backtest run."""
+    run = get_run_with_context(run_id)
+    if run is None:
+        flash(f"Run '{run_id}' not found.", "danger")
+        return redirect(url_for("index"))
+
+    # Resolve the CSV path: either in results/<run_id>/ or flat results/
+    results_dir_path = PROJECT_ROOT / run["results_dir"] if run["results_dir"] else RESULTS_DIR
+    csv_filename = run.get("results_csv", "results.csv")
+    filepath = results_dir_path / csv_filename
+
+    # Fallback: legacy runs may have results_csv="results.csv" with no results_dir
+    if not filepath.exists() and not run["results_dir"]:
+        filepath = RESULTS_DIR / csv_filename
+
+    if not filepath.exists():
+        parsed = {"trades": [], "metrics": {}, "columns": [], "error": f"Result file not found: {filepath}"}
+        status = "pending"
+        has_html = False
+    else:
+        parsed = parse_results_csv(filepath)
+        status = get_status(filepath)
+        html_companion = filepath.with_suffix(".html")
+        has_html = html_companion.exists()
+
+    strategy = run.get("strategy") or get_strategy_info(run["strategy_id"])
+    version = run.get("version")
+
+    return render_template(
+        "results_detail.html",
+        filename=csv_filename,
+        parsed=parsed,
+        status=status,
+        has_html=has_html,
+        strategy=strategy,
+        afl_content=version.get("afl_content", "") if version else get_afl_content(),
+        afl_path=str(AFL_STRATEGY_FILE),
+        versions=get_afl_versions(),
+        db_configured=bool(AMIBROKER_DB_PATH),
+        run=run,
+    )
+
+
+@app.route("/strategy/<strategy_id>")
+def strategy_detail(strategy_id: str):
+    """Strategy detail page showing versions and runs."""
+    strategy = db_get_strategy(strategy_id)
+    if strategy is None:
+        flash(f"Strategy '{strategy_id}' not found.", "danger")
+        return redirect(url_for("index"))
+
+    versions = db_list_versions(strategy_id)
+    runs = db_list_runs(strategy_id=strategy_id)
+
+    # Attach version info to each run for display
+    version_map = {v["id"]: v for v in versions}
+    for run in runs:
+        run["version"] = version_map.get(run["version_id"])
+
+    return render_template(
+        "strategy_detail.html",
+        strategy=strategy,
+        versions=versions,
+        runs=runs,
+        db_configured=bool(AMIBROKER_DB_PATH),
+    )
+
+
+@app.route("/strategy/create", methods=["POST"])
+def strategy_create():
+    """Create a new strategy."""
+    name = request.form.get("name", "").strip()
+    summary = request.form.get("summary", "").strip()
+    symbol = request.form.get("symbol", "").strip()
+
+    if not name:
+        flash("Strategy name is required.", "danger")
+        return redirect(url_for("index"))
+
+    strategy_id = db_create_strategy(name=name, summary=summary, symbol=symbol)
+    flash(f"Strategy '{name}' created.", "success")
+    return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+
+@app.route("/strategy/<strategy_id>/version/create", methods=["POST"])
+def version_create(strategy_id: str):
+    """Create a new version for a strategy with AFL content."""
+    afl_content = request.form.get("afl_content", "")
+    label = request.form.get("label", "").strip()
+
+    if not afl_content.strip():
+        flash("AFL content cannot be empty.", "danger")
+        return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    # Pre-flight validation
+    afl_warnings = validate_afl_content(afl_content)
+    for warning in afl_warnings:
+        flash(f"AFL warning: {warning}", "warning")
+
+    version_id = db_create_version(
+        strategy_id=strategy_id,
+        afl_content=afl_content,
+        label=label,
+    )
+    flash(f"Version created (v{label or 'new'}).", "success")
+    return redirect(url_for("strategy_detail", strategy_id=strategy_id))
 
 
 @app.route("/results/<filename>/stage", methods=["POST"])
@@ -761,6 +903,58 @@ def download_file(filename: str):
     return send_from_directory(str(RESULTS_DIR), filename, as_attachment=True)
 
 
+@app.route("/run/<run_id>/download/<filename>")
+def download_run_file(run_id: str, filename: str):
+    """Serve a file from a GUID-based run results directory."""
+    run = db_get_run(run_id)
+    if run is None:
+        return "Run not found", 404
+    run_dir = PROJECT_ROOT / run["results_dir"]
+    if not run_dir.exists():
+        return "Results directory not found", 404
+    return send_from_directory(str(run_dir), filename, as_attachment=True)
+
+
+# ---------------------------------------------------------------------------
+# API routes — strategies, versions, runs
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/strategies")
+def api_strategies():
+    """JSON API endpoint returning all strategies with summary info."""
+    strategies = db_list_strategies()
+    summaries = []
+    for s in strategies:
+        summary = get_strategy_summary(s["id"])
+        if summary:
+            summaries.append(summary)
+    return jsonify(summaries)
+
+
+@app.route("/api/strategy/<strategy_id>/versions")
+def api_versions(strategy_id: str):
+    """JSON API endpoint returning all versions for a strategy."""
+    versions = db_list_versions(strategy_id)
+    return jsonify(versions)
+
+
+@app.route("/api/strategy/<strategy_id>/runs")
+def api_runs(strategy_id: str):
+    """JSON API endpoint returning all runs for a strategy."""
+    runs = db_list_runs(strategy_id=strategy_id)
+    return jsonify(runs)
+
+
+@app.route("/api/run/<run_id>")
+def api_run_detail(run_id: str):
+    """JSON API endpoint returning full run details with context."""
+    run = get_run_with_context(run_id)
+    if run is None:
+        return jsonify({"error": "Run not found"}), 404
+    return jsonify(run)
+
+
 # ---------------------------------------------------------------------------
 # Sprint 2 routes
 # ---------------------------------------------------------------------------
@@ -867,7 +1061,14 @@ def backtest_run():
         flash("AMIBROKER_DB_PATH not configured in settings.", "danger")
         return redirect(url_for("index"))
 
-    thread = threading.Thread(target=_run_backtest_background, daemon=True)
+    strategy_id = request.form.get("strategy_id", "").strip() or None
+    version_id = request.form.get("version_id", "").strip() or None
+
+    thread = threading.Thread(
+        target=_run_backtest_background,
+        args=(strategy_id, version_id),
+        daemon=True,
+    )
     thread.start()
     flash("Backtest started. Monitoring progress...", "info")
     return redirect(url_for("backtest_status_page"))

@@ -39,6 +39,8 @@ results/*.csv
 !results/results.csv
 results/staged/
 results/*.status.json
+# GUID-based run results (results/<uuid>/)
+results/*/
 
 # Strategy database (auto-seeded on first run)
 data/*.db

@@ -93,28 +93,13 @@ def test_index_page(client):
     assert response.status_code == 200
 
 
-def test_index_no_results(client):
-    """GET / should show 'No backtest results' when RESULTS_DIR has no CSVs.
-
-    We temporarily rename any existing CSVs, check the response, then restore.
-    """
-    # Stash any existing CSV files out of the way
-    existing_csvs = list(RESULTS_DIR.glob("*.csv"))
-    renamed = []
-    for csv_file in existing_csvs:
-        backup = csv_file.with_suffix(".csv._bak")
-        csv_file.rename(backup)
-        renamed.append((backup, csv_file))
-
-    try:
-        response = client.get("/")
-        assert response.status_code == 200
-        assert b"No backtest results" in response.data
-    finally:
-        # Restore all backed-up CSVs
-        for backup, original in renamed:
-            if backup.exists():
-                backup.rename(original)
+def test_index_shows_strategies(client):
+    """GET / should show the Strategies section (seeded DB has at least one)."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert b"Strategies" in response.data
+    # The seeded SMA Crossover strategy should appear
+    assert b"SMA Crossover" in response.data
 
 
 def test_index_with_results(client, sample_csv):

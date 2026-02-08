@@ -6,7 +6,7 @@
 <!-- ── Header ──────────────────────────────────────────── -->
 <div class="mb-4">
     <h2 class="fw-bold mb-1">Dashboard</h2>
-    <p class="text-muted mb-0">Review and manage backtest results</p>
+    <p class="text-muted mb-0">Manage strategies, versions, and backtest runs</p>
 </div>
 
 <!-- ── DB Warning ──────────────────────────────────────── -->
@@ -28,13 +28,7 @@
             <div class="card-body">
                 <div class="action-icon"><i class="bi bi-code-slash"></i></div>
                 <h6>Edit Strategy</h6>
-                <p class="text-muted small mb-0">
-                    {% if afl_filename is defined and afl_filename %}
-                        <span class="text-mono">{{ afl_filename }}</span>
-                    {% else %}
-                        Open the AFL code editor
-                    {% endif %}
-                </p>
+                <p class="text-muted small mb-0">Open the AFL code editor</p>
             </div>
         </a>
     </div>
@@ -68,72 +62,126 @@
     </div>
 </div>
 
-<!-- ── Results Section ─────────────────────────────────── -->
+<!-- ── Strategies Section ─────────────────────────────── -->
 <div class="d-flex align-items-center justify-content-between mb-3">
-    <h4 class="fw-bold mb-0">Backtest Results</h4>
-    {% if result_files %}
-    <span class="badge bg-secondary">{{ result_files|length }} result{{ 's' if result_files|length != 1 }}</span>
-    {% endif %}
+    <h4 class="fw-bold mb-0">Strategies</h4>
+    <div class="d-flex gap-2 align-items-center">
+        {% if strategies %}
+        <span class="badge bg-secondary">{{ strategies|length }} strateg{{ 'y' if strategies|length == 1 else 'ies' }}</span>
+        {% endif %}
+        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#newStrategyModal">
+            <i class="bi bi-plus-lg me-1"></i>New Strategy
+        </button>
+    </div>
 </div>
 
-{% if not result_files %}
-<div class="card">
+{% if not strategies %}
+<div class="card mb-5">
     <div class="card-body text-center py-5">
-        <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
-        <p class="text-muted mt-3 mb-0">No backtest results yet. Run a backtest to get started.</p>
+        <i class="bi bi-lightbulb text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3 mb-2">No strategies yet.</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newStrategyModal">
+            <i class="bi bi-plus-lg me-1"></i>Create your first strategy
+        </button>
     </div>
 </div>
 {% else %}
-<div class="row g-3">
-    {% for rf in result_files %}
-    {% if get_strategy_info is defined and get_strategy_info %}
-        {% set info = get_strategy_info(rf.name) %}
-    {% else %}
-        {% set info = None %}
-    {% endif %}
+<div class="row g-3 mb-5">
+    {% for s in strategies %}
     <div class="col-md-6 col-lg-4">
         <div class="card h-100">
             <div class="card-body d-flex flex-column">
                 <div class="d-flex align-items-start justify-content-between mb-2">
                     <div>
-                        <h6 class="fw-bold mb-0">
-                            {% if info and info.name %}
-                                {{ info.name }}
-                            {% else %}
-                                {{ rf.name }}
-                            {% endif %}
-                        </h6>
-                        <small class="text-muted text-mono">{{ rf.name }}</small>
+                        <h6 class="fw-bold mb-0">{{ s.name }}</h6>
+                        <small class="text-muted text-mono">{{ s.id[:8] }}...</small>
                     </div>
-                    {% if rf.status == "approved" %}
-                        <span class="badge badge-approved">Approved</span>
-                    {% elif rf.status == "rejected" %}
-                        <span class="badge badge-rejected">Rejected</span>
-                    {% elif rf.status == "staged" %}
-                        <span class="badge badge-staged">Staged</span>
-                    {% else %}
-                        <span class="badge badge-pending">Pending</span>
+                    {% if s.latest_run %}
+                        {% if s.latest_run.status == "completed" %}
+                        <span class="badge bg-success">Completed</span>
+                        {% elif s.latest_run.status == "running" %}
+                        <span class="badge bg-info">Running</span>
+                        {% elif s.latest_run.status == "failed" %}
+                        <span class="badge bg-danger">Failed</span>
+                        {% else %}
+                        <span class="badge bg-secondary">{{ s.latest_run.status|title }}</span>
+                        {% endif %}
                     {% endif %}
                 </div>
 
-                {% if info and info.symbol %}
+                {% if s.symbol %}
                 <span class="badge bg-light text-dark border mb-2" style="width: fit-content;">
-                    <i class="bi bi-tag me-1"></i>{{ info.symbol }}
+                    <i class="bi bi-tag me-1"></i>{{ s.symbol }}
                 </span>
                 {% endif %}
 
-                {% if info and info.summary %}
-                <p class="text-muted small mb-2">{{ info.summary }}</p>
+                {% if s.summary %}
+                <p class="text-muted small mb-2">{{ s.summary|truncate(120) }}</p>
+                {% endif %}
+
+                <div class="d-flex gap-2 mb-2">
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-layers me-1"></i>{{ s.version_count }} version{{ 's' if s.version_count != 1 }}
+                    </span>
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-play-circle me-1"></i>{{ s.run_count }} run{{ 's' if s.run_count != 1 }}
+                    </span>
+                </div>
+
+                {% if s.latest_run and s.latest_run.metrics %}
+                    {% set m = s.latest_run.metrics %}
+                    {% if m.total_trades is defined %}
+                    <div class="small text-muted mb-2">
+                        Latest: {{ m.total_trades }} trades
+                        {% if m.total_profit is defined %}, ${{ "%.2f"|format(m.total_profit) }}{% endif %}
+                        {% if m.win_rate is defined %}, {{ m.win_rate }}% win rate{% endif %}
+                    </div>
+                    {% endif %}
                 {% endif %}
 
                 <div class="mt-auto pt-2">
                     <div class="d-flex justify-content-between align-items-center">
                         <small class="text-muted">
-                            {% if rf.size_kb is defined %}{{ rf.size_kb }} KB{% endif %}
-                            {% if rf.modified_date is defined %}&middot; {{ rf.modified_date }}{% endif %}
+                            Updated {{ s.updated_at[:10] if s.updated_at else 'N/A' }}
+                        </small>
+                        <div class="d-flex gap-1">
+                            {% if s.latest_run %}
+                            <a href="/run/{{ s.latest_run.id }}" class="btn btn-sm btn-outline-secondary" title="View latest run">
+                                <i class="bi bi-graph-up"></i>
+                            </a>
+                            {% endif %}
+                            <a href="/strategy/{{ s.id }}" class="btn btn-sm btn-outline-primary">
+                                Details <i class="bi bi-arrow-right ms-1"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- ── Legacy Results (flat files not tied to a run) ──── -->
+{% if result_files %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Legacy Results</h4>
+    <span class="badge bg-secondary">{{ result_files|length }} file{{ 's' if result_files|length != 1 }}</span>
+</div>
+<div class="row g-3">
+    {% for rf in result_files %}
+    <div class="col-md-6 col-lg-4">
+        <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+                <h6 class="fw-bold mb-1">{{ rf.name }}</h6>
+                <div class="mt-auto pt-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">
+                            {{ rf.size_kb }} KB &middot; {{ rf.modified_date }}
                         </small>
                         <a href="/results/{{ rf.name }}" class="btn btn-sm btn-outline-primary">
-                            View Details <i class="bi bi-arrow-right ms-1"></i>
+                            View <i class="bi bi-arrow-right ms-1"></i>
                         </a>
                     </div>
                 </div>
@@ -143,4 +191,39 @@
     {% endfor %}
 </div>
 {% endif %}
+
+<!-- ── New Strategy Modal ─────────────────────────────── -->
+<div class="modal fade" id="newStrategyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="/strategy/create">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New Strategy</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="strategyName" class="form-label">Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="strategyName" name="name" required
+                               placeholder="e.g. SMA Crossover — Gold Futures">
+                    </div>
+                    <div class="mb-3">
+                        <label for="strategySummary" class="form-label">Summary</label>
+                        <textarea class="form-control" id="strategySummary" name="summary" rows="2"
+                                  placeholder="Brief description of the strategy approach"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="strategySymbol" class="form-label">Symbol</label>
+                        <input type="text" class="form-control" id="strategySymbol" name="symbol"
+                               placeholder="e.g. /GC, NQ, ES">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Strategy</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}

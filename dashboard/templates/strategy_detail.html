@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}{{ strategy.name }} — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+        <li class="breadcrumb-item active">{{ strategy.name }}</li>
+    </ol>
+</nav>
+
+<!-- ── Strategy Header ────────────────────────────────── -->
+<div class="d-flex align-items-start justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1">{{ strategy.name }}</h2>
+        <p class="text-muted mb-1">
+            <code class="small">{{ strategy.id }}</code>
+        </p>
+        {% if strategy.symbol %}
+        <span class="badge bg-light text-dark border">
+            <i class="bi bi-tag me-1"></i>{{ strategy.symbol }}
+        </span>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        <form method="POST" action="/backtest/run">
+            <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
+            <button type="submit" class="btn btn-success"
+                {% if not db_configured %}disabled{% endif %}>
+                <i class="bi bi-play-fill me-1"></i>Run Backtest
+            </button>
+        </form>
+    </div>
+</div>
+
+{% if strategy.summary %}
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="mb-0">{{ strategy.summary }}</p>
+    </div>
+</div>
+{% endif %}
+
+{% if strategy.description %}
+<div class="card mb-4">
+    <div class="card-body">
+        <h6 class="fw-bold mb-2">Description</h6>
+        <div style="white-space: pre-wrap;" class="small">{{ strategy.description }}</div>
+    </div>
+</div>
+{% endif %}
+
+{% if strategy.risk_notes %}
+<div class="callout-amber mb-4 d-flex align-items-start gap-2">
+    <i class="bi bi-exclamation-triangle-fill text-warning fs-5 mt-1"></i>
+    <div>
+        <strong>Risk Notes</strong><br>
+        {{ strategy.risk_notes }}
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Versions ───────────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Versions</h4>
+    <div class="d-flex gap-2 align-items-center">
+        <span class="badge bg-secondary">{{ versions|length }} version{{ 's' if versions|length != 1 }}</span>
+        <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#newVersionModal">
+            <i class="bi bi-plus-lg me-1"></i>New Version
+        </button>
+    </div>
+</div>
+
+{% if not versions %}
+<div class="card mb-4">
+    <div class="card-body text-center py-4">
+        <p class="text-muted mb-2">No versions yet. Create the first version with your AFL code.</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newVersionModal">
+            <i class="bi bi-plus-lg me-1"></i>Create Version
+        </button>
+    </div>
+</div>
+{% else %}
+<div class="table-responsive mb-4">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Version</th>
+                <th>Label</th>
+                <th>AFL Lines</th>
+                <th>Parameters</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for v in versions %}
+            <tr>
+                <td><span class="badge bg-primary">v{{ v.version_number }}</span></td>
+                <td>{{ v.label or '—' }}</td>
+                <td>{{ v.afl_content.split('\n')|length if v.afl_content else 0 }} lines</td>
+                <td>{{ v.parameters|length }} params</td>
+                <td><small class="text-muted">{{ v.created_at[:19] if v.created_at else 'N/A' }}</small></td>
+                <td>
+                    <div class="d-flex gap-1">
+                        <button class="btn btn-sm btn-outline-secondary"
+                                onclick="showAflPreview('{{ v.id }}')" title="Preview AFL">
+                            <i class="bi bi-eye"></i>
+                        </button>
+                        <form method="POST" action="/backtest/run" class="d-inline">
+                            <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
+                            <input type="hidden" name="version_id" value="{{ v.id }}">
+                            <button type="submit" class="btn btn-sm btn-outline-success" title="Run backtest"
+                                {% if not db_configured %}disabled{% endif %}>
+                                <i class="bi bi-play-fill"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- ── Backtest Runs ──────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Backtest Runs</h4>
+    <span class="badge bg-secondary">{{ runs|length }} run{{ 's' if runs|length != 1 }}</span>
+</div>
+
+{% if not runs %}
+<div class="card mb-4">
+    <div class="card-body text-center py-4">
+        <i class="bi bi-play-circle text-muted" style="font-size: 2rem;"></i>
+        <p class="text-muted mt-2 mb-0">No backtest runs yet. Run a backtest to get started.</p>
+    </div>
+</div>
+{% else %}
+<div class="table-responsive mb-4">
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Run ID</th>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Metrics</th>
+                <th>Started</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in runs %}
+            <tr>
+                <td><code class="small">{{ r.id[:8] }}...</code></td>
+                <td>
+                    {% if r.version %}
+                    <span class="badge bg-primary">v{{ r.version.version_number }}</span>
+                    {% if r.version.label %}<small class="text-muted ms-1">{{ r.version.label }}</small>{% endif %}
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.status == "completed" %}
+                    <span class="badge bg-success">Completed</span>
+                    {% elif r.status == "running" %}
+                    <span class="badge bg-info"><span class="spinner-border spinner-border-sm me-1"></span>Running</span>
+                    {% elif r.status == "failed" %}
+                    <span class="badge bg-danger">Failed</span>
+                    {% else %}
+                    <span class="badge bg-secondary">{{ r.status|title }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.metrics %}
+                        {% if r.metrics.total_trades is defined %}
+                        <small>{{ r.metrics.total_trades }} trades
+                        {% if r.metrics.total_profit is defined %}, ${{ "%.2f"|format(r.metrics.total_profit) }}{% endif %}
+                        </small>
+                        {% else %}
+                        <small class="text-muted">—</small>
+                        {% endif %}
+                    {% else %}
+                    <small class="text-muted">—</small>
+                    {% endif %}
+                </td>
+                <td><small class="text-muted">{{ r.started_at[:19] if r.started_at else r.created_at[:19] if r.created_at else 'N/A' }}</small></td>
+                <td>
+                    {% if r.status == "completed" %}
+                    <a href="/run/{{ r.id }}" class="btn btn-sm btn-outline-primary">
+                        View <i class="bi bi-arrow-right ms-1"></i>
+                    </a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- ── New Version Modal ──────────────────────────────── -->
+<div class="modal fade" id="newVersionModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <form method="POST" action="/strategy/{{ strategy.id }}/version/create">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New Version</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="versionLabel" class="form-label">Label</label>
+                        <input type="text" class="form-control" id="versionLabel" name="label"
+                               placeholder="e.g. Added stop loss, Changed MA periods">
+                    </div>
+                    <div class="mb-3">
+                        <label for="versionAfl" class="form-label">AFL Code <span class="text-danger">*</span></label>
+                        <textarea class="form-control font-monospace" id="versionAfl" name="afl_content"
+                                  rows="20" required
+                                  placeholder="Paste your AFL strategy code here...">{% if versions %}{{ versions[0].afl_content }}{% endif %}</textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Version</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ── AFL Preview Modal ──────────────────────────────── -->
+<div class="modal fade" id="aflPreviewModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="aflPreviewTitle">AFL Preview</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <pre><code id="aflPreviewContent" class="font-monospace small"></code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Store version AFL content for preview
+const versionAfl = {
+    {% for v in versions %}
+    "{{ v.id }}": {{ v.afl_content|tojson }},
+    {% endfor %}
+};
+
+function showAflPreview(versionId) {
+    const content = versionAfl[versionId] || "(No AFL content)";
+    document.getElementById("aflPreviewContent").textContent = content;
+
+    // Find version number for title
+    {% for v in versions %}
+    if (versionId === "{{ v.id }}") {
+        document.getElementById("aflPreviewTitle").textContent = "AFL Preview — v{{ v.version_number }}{% if v.label %} ({{ v.label }}){% endif %}";
+    }
+    {% endfor %}
+
+    new bootstrap.Modal(document.getElementById("aflPreviewModal")).show();
+}
+</script>
+{% endblock %}

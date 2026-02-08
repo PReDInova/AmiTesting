@@ -138,7 +138,7 @@ class OLEBacktester:
     # Backtest execution
     # ------------------------------------------------------------------
 
-    def run_backtest(self, apx_path: str = None) -> bool:
+    def run_backtest(self, apx_path: str = None, output_dir: str = None) -> bool:
         """Open an .apx project, run the backtest, export results.
 
         Parameters
@@ -146,6 +146,10 @@ class OLEBacktester:
         apx_path : str, optional
             Path to the .apx file.  Falls back to ``APX_OUTPUT`` from
             settings if not provided.
+        output_dir : str, optional
+            Directory to export results into.  Falls back to ``RESULTS_DIR``
+            from settings if not provided.  When a GUID-based run is active,
+            this will be ``results/<run_uuid>/``.
 
         Returns True on success, False on timeout/failure.
         """
@@ -153,6 +157,16 @@ class OLEBacktester:
         poll_interval = BACKTEST_SETTINGS["poll_interval"]
         max_wait = BACKTEST_SETTINGS["max_wait"]
         run_mode = BACKTEST_SETTINGS["run_mode"]
+
+        # Determine output paths
+        if output_dir:
+            out = Path(output_dir)
+        else:
+            out = RESULTS_DIR
+        out.mkdir(parents=True, exist_ok=True)
+
+        html_path = str(out / "results.html")
+        csv_path = str(out / "results.csv")
 
         analysis_doc = None
         try:
@@ -187,11 +201,6 @@ class OLEBacktester:
             logger.info("Backtest completed in %.1f seconds.", elapsed)
 
             # --- Export results ---
-            RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-            html_path = str(RESULTS_HTML)
-            csv_path = str(RESULTS_CSV)
-
             logger.info("Exporting HTML results to: %s", html_path)
             analysis_doc.Export(html_path)
 
@@ -199,7 +208,8 @@ class OLEBacktester:
             analysis_doc.Export(csv_path)
 
             # Log file sizes if the exports landed on disk
-            for label, fpath in [("HTML", RESULTS_HTML), ("CSV", RESULTS_CSV)]:
+            for label, fpath_str in [("HTML", html_path), ("CSV", csv_path)]:
+                fpath = Path(fpath_str)
                 if fpath.exists():
                     size_kb = fpath.stat().st_size / 1024
                     logger.info(
@@ -243,8 +253,13 @@ class OLEBacktester:
     # Full orchestration
     # ------------------------------------------------------------------
 
-    def run_full_test(self, db_path: str = None, apx_path: str = None) -> bool:
+    def run_full_test(self, db_path: str = None, apx_path: str = None, output_dir: str = None) -> bool:
         """Orchestrate the complete workflow: connect, load, validate, backtest, disconnect.
+
+        Parameters
+        ----------
+        output_dir : str, optional
+            Directory to export results into (e.g. ``results/<run_uuid>/``).
 
         Returns True when every step succeeds.
         """
@@ -262,7 +277,7 @@ class OLEBacktester:
                 return False
             logger.info("APX validated, proceeding to backtest.")
 
-            if not self.run_backtest(apx_path):
+            if not self.run_backtest(apx_path, output_dir=output_dir):
                 return False
 
             return True

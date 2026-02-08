@@ -40,6 +40,11 @@ results/*.csv
 results/staged/
 results/*.status.json
 
+# Strategy database (auto-seeded on first run)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 # AmiBroker generated files
 *.apx.bak
 

@@ -25,9 +25,11 @@ slowMA     = TimeFrameExpand(slowMA, in1Minute);
 buySignal  = TimeFrameExpand(buySignal, in1Minute, expandFirst);
 sellSignal = TimeFrameExpand(sellSignal, in1Minute, expandFirst);
 
-// Entry/Exit
-Buy  = buySignal;
-Sell = sellSignal;
+// Entry/Exit (long only - disable short selling)
+Buy   = buySignal;
+Sell  = sellSignal;
+Short = 0;
+Cover = 0;
 
 // Position sizing - 1 contract
 SetPositionSize(1, spsShares);

@@ -54,8 +54,9 @@ def _make_mock_app(is_busy_sequence=None):
 class TestConnect:
     """Verify connect() behaviour under various COM conditions."""
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_connect_success(self, mock_dispatch):
+    def test_connect_success(self, mock_dispatch, mock_popen):
         """connect() should return True and set Visible = 1 on the COM app."""
         mock_app = MagicMock()
         mock_dispatch.return_value = mock_app
@@ -67,10 +68,12 @@ class TestConnect:
 
         assert result is True
         mock_dispatch.assert_called_once_with("Broker.Application")
+        mock_popen.assert_called_once()
         assert mock_app.Visible == 1
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_connect_failure(self, mock_dispatch):
+    def test_connect_failure(self, mock_dispatch, mock_popen):
         """connect() should return False when Dispatch raises."""
         mock_dispatch.side_effect = Exception("COM server not registered")
 
@@ -89,8 +92,9 @@ class TestConnect:
 class TestLoadDatabase:
     """Verify load_database() behaviour."""
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_load_database_success(self, mock_dispatch):
+    def test_load_database_success(self, mock_dispatch, mock_popen):
         """load_database() should call LoadDatabase on the COM app and return True."""
         mock_app = MagicMock()
         mock_dispatch.return_value = mock_app
@@ -105,8 +109,9 @@ class TestLoadDatabase:
         assert result is True
         mock_app.LoadDatabase.assert_called_once_with(r"C:\TestDB")
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_load_database_failure(self, mock_dispatch):
+    def test_load_database_failure(self, mock_dispatch, mock_popen):
         """load_database() should return False when LoadDatabase raises."""
         mock_app = MagicMock()
         mock_app.LoadDatabase.side_effect = Exception("DB not found")
@@ -129,8 +134,9 @@ class TestLoadDatabase:
 class TestRunBacktest:
     """Verify run_backtest() behaviour."""
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_run_backtest_success(self, mock_dispatch, tmp_path):
+    def test_run_backtest_success(self, mock_dispatch, mock_popen, tmp_path):
         """run_backtest() should return True when IsBusy becomes False,
         and Export should be called twice (HTML and CSV)."""
         mock_app = MagicMock()
@@ -157,8 +163,9 @@ class TestRunBacktest:
         assert analysis_doc.Export.call_count == 2
         analysis_doc.Close.assert_called_once()
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_run_backtest_timeout(self, mock_dispatch):
+    def test_run_backtest_timeout(self, mock_dispatch, mock_popen):
         """run_backtest() should return False when IsBusy never becomes False
         and max_wait is exceeded."""
         mock_app = MagicMock()
@@ -187,8 +194,9 @@ class TestRunBacktest:
             # Restore original settings
             settings.BACKTEST_SETTINGS.update(original_settings)
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_run_backtest_open_fails(self, mock_dispatch):
+    def test_run_backtest_open_fails(self, mock_dispatch, mock_popen):
         """run_backtest() should return False when AnalysisDocs.Open returns None."""
         mock_app = MagicMock()
         mock_dispatch.return_value = mock_app
@@ -211,8 +219,9 @@ class TestRunBacktest:
 class TestDisconnect:
     """Verify disconnect() behaviour."""
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_disconnect(self, mock_dispatch):
+    def test_disconnect(self, mock_dispatch, mock_popen):
         """disconnect() should call Quit() on the COM application."""
         mock_app = MagicMock()
         mock_dispatch.return_value = mock_app
@@ -233,8 +242,9 @@ class TestDisconnect:
 class TestRunFullTest:
     """Verify run_full_test() end-to-end orchestration."""
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_run_full_test_success(self, mock_dispatch):
+    def test_run_full_test_success(self, mock_dispatch, mock_popen):
         """run_full_test() should return True when connect, load_database,
         and run_backtest all succeed; Quit should still be called."""
         mock_app = MagicMock()
@@ -253,8 +263,9 @@ class TestRunFullTest:
         # Quit is called by disconnect() in the finally block
         mock_app.Quit.assert_called_once()
 
+    @patch("subprocess.Popen")
     @patch("win32com.client.Dispatch")
-    def test_run_full_test_connect_fails(self, mock_dispatch):
+    def test_run_full_test_connect_fails(self, mock_dispatch, mock_popen):
         """run_full_test() should return False when connect() fails."""
         mock_dispatch.side_effect = Exception("COM unavailable")
 

@@ -87,11 +87,24 @@ def build_apx(
     # Write output APX file ------------------------------------------------
     output_apx_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # AmiBroker requires double-quoted XML declaration and full open/close
+    # tags (not self-closing).  Python's ElementTree uses single quotes in
+    # the declaration and collapses empty elements to self-closing form,
+    # so we write without a declaration, use short_empty_elements=False,
+    # and prepend the correct declaration manually.
     tree.write(
         str(output_apx_path),
         encoding="ISO-8859-1",
-        xml_declaration=True,
+        xml_declaration=False,
+        short_empty_elements=False,
     )
+
+    # Prepend the double-quoted XML declaration
+    raw = output_apx_path.read_bytes()
+    with open(output_apx_path, "wb") as f:
+        f.write(b'<?xml version="1.0" encoding="ISO-8859-1"?>\n')
+        f.write(raw)
+
     logger.info("APX file written: %s", output_apx_path)
 
     return str(output_apx_path)

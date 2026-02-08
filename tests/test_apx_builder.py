@@ -44,8 +44,10 @@ class TestBuildApxSuccess:
         assert formula_elem is not None, "FormulaContent element missing in output"
 
         afl_content = tmp_afl_file.read_text(encoding="utf-8")
-        assert formula_elem.text == afl_content, (
-            "FormulaContent does not match the AFL source"
+        # AmiBroker format stores newlines as literal \r\n escape sequences
+        afl_escaped = afl_content.replace("\r\n", "\\r\\n").replace("\n", "\\r\\n")
+        assert formula_elem.text == afl_escaped, (
+            "FormulaContent does not match the escaped AFL source"
         )
 
     def test_build_apx_returns_output_path(
@@ -163,6 +165,8 @@ class TestBuildApxRealFiles:
         assert formula_elem is not None
 
         afl_source = AFL_STRATEGY_FILE.read_text(encoding="utf-8")
-        assert formula_elem.text == afl_source, (
-            "FormulaContent does not match the real AFL source file"
+        # AmiBroker format stores newlines as literal \r\n escape sequences
+        afl_escaped = afl_source.replace("\r\n", "\\r\\n").replace("\n", "\\r\\n")
+        assert formula_elem.text == afl_escaped, (
+            "FormulaContent does not match the escaped real AFL source file"
         )

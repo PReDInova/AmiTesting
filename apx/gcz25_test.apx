@@ -3,42 +3,8 @@
 <General>
 <FormatVersion>1</FormatVersion>
 <Symbol></Symbol>
-<FormulaPath></FormulaPath>
-<FormulaContent>// Simple Moving Average Crossover Strategy for /GC (GCZ25)
-// Sprint 1: OLE Interface Verification Test
-//
-// Strategy: Buy when fast MA crosses above slow MA
-//           Sell when slow MA crosses above fast MA
-//
-// Parameters:
-//   Fast MA Period: 10
-//   Slow MA Period: 50
-//   Applied to: Close price, Daily bars
-
-// Moving Average calculations
-fastMA = MA(Close, 10);
-slowMA = MA(Close, 50);
-
-// Entry/Exit signals
-Buy = Cross(fastMA, slowMA);
-Sell = Cross(slowMA, fastMA);
-
-// Position sizing - simple fixed
-SetPositionSize(1, spsShares);
-
-// Remove excess signals
-Buy = ExRem(Buy, Sell);
-Sell = ExRem(Sell, Buy);
-
-// Plot for visual verification
-Plot(Close, "Price", colorDefault, styleCandle);
-Plot(fastMA, "Fast MA(10)", colorGreen, styleLine);
-Plot(slowMA, "Slow MA(50)", colorRed, styleLine);
-
-// Mark buy/sell signals on chart
-PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);
-PlotShapes(Sell * shapeDownArrow, colorRed, 0, High);
-</FormulaContent>
+<FormulaPath>C:\\Users\\prestondinova\\Documents\\AmiTesting\\afl\\ma_crossover.afl</FormulaPath>
+<FormulaContent>// Simple Moving Average Crossover Strategy for /GC (GCZ25)\r\n// Sprint 1: OLE Interface Verification Test\r\n//\r\n// Strategy: Buy when fast MA crosses above slow MA\r\n//           Sell when slow MA crosses above fast MA\r\n//\r\n// Parameters:\r\n//   Fast MA Period: 10\r\n//   Slow MA Period: 50\r\n//   Applied to: Close price, Daily bars\r\n\r\n// Moving Average calculations\r\nfastMA = MA(Close, 10);\r\nslowMA = MA(Close, 50);\r\n\r\n// Entry/Exit signals\r\nBuy = Cross(fastMA, slowMA);\r\nSell = Cross(slowMA, fastMA);\r\n\r\n// Position sizing - simple fixed\r\nSetPositionSize(1, spsShares);\r\n\r\n// Remove excess signals\r\nBuy = ExRem(Buy, Sell);\r\nSell = ExRem(Sell, Buy);\r\n\r\n// Plot for visual verification\r\nPlot(Close, "Price", colorDefault, styleCandle);\r\nPlot(fastMA, "Fast MA(10)", colorGreen, styleLine);\r\nPlot(slowMA, "Slow MA(50)", colorRed, styleLine);\r\n\r\n// Mark buy/sell signals on chart\r\nPlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);\r\nPlotShapes(Sell * shapeDownArrow, colorRed, 0, High);\r\n</FormulaContent>
 <ApplyTo>1</ApplyTo>
 <RangeType>0</RangeType>
 <RangeAmount>1</RangeAmount>

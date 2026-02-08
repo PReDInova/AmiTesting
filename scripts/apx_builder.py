@@ -8,7 +8,6 @@ the exact byte format of the template — AmiBroker is strict about XML
 formatting, line endings, and quote style.
 """
 
-import re
 import sys
 import logging
 from pathlib import Path
@@ -26,12 +25,6 @@ from config.settings import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Regex to match <FormulaContent>...</FormulaContent> (including empty)
-_FORMULA_RE = re.compile(
-    r"(<FormulaContent>)(.*?)(</FormulaContent>)",
-    re.DOTALL,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -83,28 +76,44 @@ def build_apx(
     afl_content = afl_path.read_text(encoding="utf-8")
     logger.info("Read %d characters from AFL file.", len(afl_content))
 
-    # Read the template as raw bytes to preserve exact format ---------------
+    # Read template as raw bytes to preserve exact format (CRLF, encoding) --
     if not template_apx_path.exists():
         raise FileNotFoundError(f"APX template not found: {template_apx_path}")
-    template_raw = template_apx_path.read_text(encoding="iso-8859-1")
+    template = template_apx_path.read_bytes()
 
-    # Verify the template has a <FormulaContent> element --------------------
-    if not _FORMULA_RE.search(template_raw):
+    # Verify required tags exist --------------------------------------------
+    fc_open = b"<FormulaContent>"
+    fc_close = b"</FormulaContent>"
+    if fc_open not in template or fc_close not in template:
         raise ValueError(
             "Template XML is missing the <FormulaContent> element."
         )
 
-    # Inject AFL into <FormulaContent> via string substitution.
-    # AmiBroker expects raw AFL text (not XML-escaped) inside this element.
-    output_content = _FORMULA_RE.sub(
-        rf"\g<1>{afl_content}\g<3>",
-        template_raw,
-    )
+    # --- Prepare AFL for embedding -----------------------------------------
+    # AmiBroker stores newlines in FormulaContent as literal escape sequences
+    # (the 4-char text "\r\n"), not as actual CRLF bytes.
+    afl_escaped = afl_content.replace("\r\n", "\\r\\n").replace("\n", "\\r\\n")
+    afl_bytes = afl_escaped.encode("iso-8859-1")
+
+    # --- Inject FormulaContent via direct byte splicing --------------------
+    fc_start = template.find(fc_open) + len(fc_open)
+    fc_end = template.find(fc_close)
+    output = template[:fc_start] + afl_bytes + template[fc_end:]
     logger.info("Injected AFL content into <FormulaContent>.")
 
-    # Write output APX file preserving the template's encoding --------------
+    # --- Inject FormulaPath (absolute path with doubled backslashes) -------
+    fp_open = b"<FormulaPath>"
+    fp_close = b"</FormulaPath>"
+    if fp_open in output and fp_close in output:
+        afl_abs = str(afl_path.resolve()).replace("\\", "\\\\")
+        fp_start = output.find(fp_open) + len(fp_open)
+        fp_end = output.find(fp_close)
+        output = output[:fp_start] + afl_abs.encode("iso-8859-1") + output[fp_end:]
+        logger.info("Set FormulaPath to: %s", afl_abs)
+
+    # Write output as raw bytes (no text-mode conversion) -------------------
     output_apx_path.parent.mkdir(parents=True, exist_ok=True)
-    output_apx_path.write_text(output_content, encoding="iso-8859-1")
+    output_apx_path.write_bytes(output)
 
     logger.info("APX file written: %s", output_apx_path)
 

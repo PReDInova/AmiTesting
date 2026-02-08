@@ -71,20 +71,16 @@ _backtest_lock = threading.Lock()
 
 STRATEGY_DESCRIPTIONS = {
     "results.csv": {
-        "name": "Moving Average Crossover (10/50)",
-        "summary": "Buys gold futures when short-term momentum crosses above the longer-term trend, sells when it crosses below.",
+        "name": "SMA Crossover \u2014 Tick Data (10/30 min)",
+        "summary": "Aggregates /GC tick data into 1-minute bars and trades a 10-min / 30-min SMA crossover during the Asian session.",
         "description": (
-            "This strategy tracks two moving averages of the daily closing price of gold futures (/GC). "
-            "A 'fast' average looks at the last 10 trading days (about 2 weeks), while a 'slow' average "
-            "looks at the last 50 trading days (about 2.5 months).\n\n"
-            "When the fast average crosses above the slow average, it signals that recent prices are "
-            "gaining momentum compared to the longer-term trend \u2014 the system interprets this as a bullish "
-            "signal and buys one gold futures contract. When the fast average drops back below the slow "
-            "average, momentum is fading and the system sells to exit the position.\n\n"
-            "This is a 'trend-following' approach: it works best in markets with sustained directional "
-            "moves and tends to struggle in choppy, sideways conditions. The 10/50 period combination "
-            "is a moderate setting \u2014 fast enough to catch trends but not so fast that it generates "
-            "excessive false signals.\n\n"
+            "This strategy consumes raw tick data for gold futures (/GC) during the Asian trading session "
+            "and aggregates it into 1-minute OHLC bars using AmiBroker's TimeFrameSet function.\n\n"
+            "A 10-minute 'fast' SMA and a 30-minute 'slow' SMA are computed on the 1-minute bars. "
+            "When the fast SMA crosses above the slow SMA, the system buys one gold futures contract. "
+            "When the fast SMA crosses below the slow SMA, the system exits the position.\n\n"
+            "The signals are then expanded back to the native tick timeframe so the backtest engine "
+            "processes entries and exits at tick-level precision.\n\n"
             "When reviewing results, look at:\n"
             "- Win rate: Trend-following strategies typically win 40-60% of trades\n"
             "- Average win vs average loss: Winners should be significantly larger than losers\n"
@@ -92,23 +88,23 @@ STRATEGY_DESCRIPTIONS = {
             "- Total profit: Net P&L after all trades, in dollars ($100 per point for /GC)"
         ),
         "parameters": [
-            {"name": "Fast MA Period", "value": "10 days (~2 weeks)"},
-            {"name": "Slow MA Period", "value": "50 days (~2.5 months)"},
+            {"name": "Fast MA Period", "value": "10 minutes"},
+            {"name": "Slow MA Period", "value": "30 minutes"},
+            {"name": "Bar Aggregation", "value": "1-minute (from tick data)"},
             {"name": "Position Size", "value": "1 contract"},
-            {"name": "Entry Signal", "value": "Fast MA crosses above Slow MA"},
-            {"name": "Exit Signal", "value": "Slow MA crosses above Fast MA"},
-            {"name": "Symbol", "value": "GCZ25 (Gold Futures, Dec 2025)"},
-            {"name": "Timeframe", "value": "Daily bars"},
+            {"name": "Entry Signal", "value": "Fast SMA crosses above Slow SMA"},
+            {"name": "Exit Signal", "value": "Slow SMA crosses above Fast SMA"},
+            {"name": "Symbol", "value": "/GC Gold Futures (Asian Session)"},
             {"name": "Starting Capital", "value": "$100,000"},
             {"name": "Commissions", "value": "None (clean test)"},
             {"name": "Point Value", "value": "$100 per point"},
         ],
-        "symbol": "/GC Gold Futures (GCZ25)",
+        "symbol": "/GC Gold Futures (Asian Session)",
         "risk_notes": (
-            "This is a Sprint 1 verification test \u2014 the goal is to validate that the OLE automation "
-            "pipeline works, not to find a profitable strategy. Results should be reviewed for "
-            "technical correctness (trades execute, metrics compute) rather than profitability. "
-            "No commissions are included, which overstates real-world performance."
+            "This strategy is designed for tick-level data during the Asian session only. "
+            "Results should be reviewed for technical correctness (trades execute, metrics compute) "
+            "rather than profitability. No commissions are included, which overstates real-world "
+            "performance. Tick data strategies are sensitive to data quality and gaps."
         ),
     },
     "_default": {

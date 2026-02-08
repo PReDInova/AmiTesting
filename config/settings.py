@@ -19,6 +19,7 @@ APX_DIR: Path = PROJECT_ROOT / "apx"
 SCRIPTS_DIR: Path = PROJECT_ROOT / "scripts"
 RESULTS_DIR: Path = PROJECT_ROOT / "results"
 LOGS_DIR: Path = PROJECT_ROOT / "logs"
+STRATEGIES_DIR: Path = PROJECT_ROOT / "strategies"
 
 # ---------------------------------------------------------------------------
 # AmiBroker settings

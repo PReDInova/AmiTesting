@@ -1,0 +1,427 @@
+{% extends "base.html" %}
+
+{% block title %}{{ strategy.name }} — AmiTesting{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/dracula.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+    .CodeMirror { border-radius: 8px; font-size: 0.88rem; border: 1px solid rgba(0,0,0,0.1); }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item"><a href="/strategy-builder" class="text-decoration-none">Strategy Builder</a></li>
+        <li class="breadcrumb-item active">{{ strategy.name }}</li>
+    </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex align-items-start justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1">{{ strategy.name }}</h2>
+        {% if strategy.description %}
+        <p class="text-muted mb-0">{{ strategy.description }}</p>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        {% if strategy.status == "tested" %}
+            <span class="badge bg-success fs-6">Tested</span>
+        {% elif strategy.status == "draft" %}
+            <span class="badge badge-pending fs-6">Draft</span>
+        {% else %}
+            <span class="badge bg-secondary fs-6">{{ strategy.status }}</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Two-column layout -->
+<div class="row g-4">
+
+    <!-- Left: AFL Editor -->
+    <div class="col-lg-5">
+        <div class="card mb-3">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span><i class="bi bi-code-slash me-2"></i>AFL Code</span>
+                <small class="text-muted">strategy.afl</small>
+            </div>
+            <div class="card-body p-0">
+                <form id="afl-form" method="POST" action="/strategies/{{ strategy.id }}/save">
+                    <textarea name="afl_content" id="afl-code" style="display:none;">{{ afl_content }}</textarea>
+                    <input type="hidden" name="version_label" id="version-label" value="">
+                    <input type="hidden" name="create_version" id="create-version" value="">
+                </form>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            <button type="submit" form="afl-form" class="btn btn-success btn-sm" id="btn-save">
+                <i class="bi bi-save me-1"></i>Save
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="btn-save-version"
+                    data-bs-toggle="collapse" data-bs-target="#versionInput">
+                <i class="bi bi-bookmark me-1"></i>Save Version
+            </button>
+            {% if db_configured %}
+            <form method="POST" action="/strategies/{{ strategy.id }}/run" class="d-inline">
+                <button type="submit" class="btn btn-primary btn-sm"
+                    {% if builder_state.running %}disabled{% endif %}>
+                    <i class="bi bi-play-fill me-1"></i>Run Backtest
+                </button>
+            </form>
+            {% endif %}
+        </div>
+
+        <!-- Version Label Input -->
+        <div class="collapse mb-3" id="versionInput">
+            <div class="input-group input-group-sm">
+                <input type="text" class="form-control" placeholder="Version label (e.g., added stops)"
+                       id="version-label-input">
+                <button class="btn btn-outline-primary" type="button" id="btn-do-save-version">
+                    Save
+                </button>
+            </div>
+        </div>
+
+        <!-- Version History -->
+        {% if versions %}
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-clock-history me-2"></i>Version History
+                <span class="badge bg-secondary ms-1">{{ versions|length }}</span>
+            </div>
+            <div class="card-body p-0" style="max-height: 200px; overflow-y: auto;">
+                <div class="list-group list-group-flush">
+                    {% for v in versions %}
+                    <div class="list-group-item d-flex justify-content-between align-items-center py-2">
+                        <div>
+                            <small class="text-mono">{{ v.filename }}</small>
+                            <br><small class="text-muted">{{ v.modified }}</small>
+                        </div>
+                        <small class="text-muted">{{ v.size_kb }} KB</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right: Results & Status -->
+    <div class="col-lg-7">
+
+        <!-- Builder Progress (if running or recently finished) -->
+        {% if builder_state.running and builder_state.strategy_id == strategy.id %}
+        <div class="card mb-3 border-0" style="border-left: 4px solid #0d6efd !important;">
+            <div class="card-body">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="spinner-border text-primary spinner-border-sm"></div>
+                    <h6 class="fw-bold mb-0 text-primary">Backtest running...</h6>
+                </div>
+                <div id="builder-log" class="small">
+                    {% for entry in builder_state.log %}
+                    <div class="text-muted">{{ entry.message }}</div>
+                    {% endfor %}
+                </div>
+                <small class="text-muted">Auto-refreshing...</small>
+            </div>
+        </div>
+        {% elif builder_state.strategy_id == strategy.id and builder_state.success == false and builder_state.error %}
+        <div class="callout-red mb-3">
+            <h6 class="fw-bold text-danger mb-1"><i class="bi bi-x-circle me-1"></i>Backtest Failed</h6>
+            <pre class="mb-0 p-2" style="font-size: 0.8rem; white-space: pre-wrap; background: #fff5f5; border: none;">{{ builder_state.error }}</pre>
+            {% if builder_state.log %}
+            <details class="mt-2">
+                <summary class="text-muted small">Build log ({{ builder_state.log|length }} entries)</summary>
+                {% for entry in builder_state.log %}
+                <div class="small text-muted">{{ entry.message }}</div>
+                {% endfor %}
+            </details>
+            {% endif %}
+        </div>
+        {% elif builder_state.strategy_id == strategy.id and builder_state.success == true %}
+        <div class="callout-green mb-3">
+            <h6 class="fw-bold text-success mb-0"><i class="bi bi-check-circle me-1"></i>Backtest completed successfully</h6>
+        </div>
+        {% endif %}
+
+        <!-- Results Section -->
+        {% if parsed and not parsed.error %}
+        <!-- Equity Curve -->
+        <div class="card mb-3">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <span><i class="bi bi-graph-up me-2"></i>Equity Curve</span>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" id="btn-trade-view">By Trade</button>
+                    <button type="button" class="btn btn-outline-secondary" id="btn-time-view">By Date</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="equityChart" style="max-height: 280px;"></canvas>
+            </div>
+        </div>
+
+        <!-- Metrics -->
+        {% set m = parsed.metrics %}
+        <div class="row g-2 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-blue">
+                    <div class="metric-value">{{ m.total_trades|default(0) }}</div>
+                    <div class="metric-label">Total Trades</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-green">
+                    <div class="metric-value">{{ m.winning_trades|default(0) }}</div>
+                    <div class="metric-label">Wins</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-red">
+                    <div class="metric-value">{{ m.losing_trades|default(0) }}</div>
+                    <div class="metric-label">Losses</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-amber">
+                    <div class="metric-value">{{ m.win_rate|default(0) }}%</div>
+                    <div class="metric-label">Win Rate</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-green">
+                    <div class="metric-value">${{ "{:,.0f}".format(m.total_profit|default(0)) }}</div>
+                    <div class="metric-label">Total Profit</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-blue">
+                    <div class="metric-value">${{ "{:,.0f}".format(m.avg_profit_per_trade|default(0)) }}</div>
+                    <div class="metric-label">Avg Profit</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-red">
+                    <div class="metric-value">${{ "{:,.0f}".format(m.max_drawdown|default(0)) }}</div>
+                    <div class="metric-label">Max Drawdown</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="metric-card border-gray">
+                    <div class="metric-value">{{ m.long_trades|default(0) }}L / {{ m.short_trades|default(0) }}S</div>
+                    <div class="metric-label">Long / Short</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trade Log -->
+        <div class="card">
+            <div class="card-header d-flex align-items-center justify-content-between"
+                 data-bs-toggle="collapse" data-bs-target="#tradeLog" style="cursor:pointer;">
+                <span><i class="bi bi-list-columns me-2"></i>Trade Log</span>
+                <span class="badge bg-secondary">{{ parsed.trades|length }}</span>
+            </div>
+            <div class="collapse show" id="tradeLog">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped table-hover mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    {% for col in parsed.columns %}
+                                    <th class="small">{{ col }}</th>
+                                    {% endfor %}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for trade in parsed.trades %}
+                                {% set profit_val = trade.get(parsed.metrics.get('profit_column_used', 'Profit'), 0) %}
+                                <tr class="{% if profit_val > 0 %}trade-win{% elif profit_val < 0 %}trade-loss{% endif %}">
+                                    {% for col in parsed.columns %}
+                                    <td class="small">{{ trade[col] }}</td>
+                                    {% endfor %}
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% elif not parsed %}
+        <!-- No results yet -->
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-hourglass text-muted" style="font-size: 3rem;"></i>
+                <p class="text-muted mt-3 mb-0">No backtest results yet. Save your AFL and click "Run Backtest" to test this strategy.</p>
+            </div>
+        </div>
+        {% elif parsed.error %}
+        <div class="callout-red">
+            <i class="bi bi-exclamation-triangle me-1"></i>{{ parsed.error }}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Back Button -->
+<div class="mt-4">
+    <a href="/strategy-builder" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to Strategy Builder
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/selection/active-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // --- CodeMirror ---
+    var editor = CodeMirror.fromTextArea(document.getElementById('afl-code'), {
+        mode: 'text/x-csrc',
+        theme: 'dracula',
+        lineNumbers: true,
+        matchBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        lineWrapping: true
+    });
+    editor.setSize(null, 420);
+
+    document.getElementById('afl-form').addEventListener('submit', function() {
+        editor.save();
+    });
+
+    // Ctrl+S save
+    editor.setOption('extraKeys', {
+        'Ctrl-S': function() { editor.save(); document.getElementById('afl-form').submit(); },
+        'Cmd-S': function() { editor.save(); document.getElementById('afl-form').submit(); }
+    });
+
+    // Save Version button
+    var btnDoSaveVersion = document.getElementById('btn-do-save-version');
+    if (btnDoSaveVersion) {
+        btnDoSaveVersion.addEventListener('click', function() {
+            var label = document.getElementById('version-label-input').value;
+            document.getElementById('version-label').value = label;
+            document.getElementById('create-version').value = 'on';
+            editor.save();
+            document.getElementById('afl-form').submit();
+        });
+    }
+
+    // --- Equity Curve ---
+    var equityChart = null;
+    var tradeData = null;
+    var timeData = null;
+
+    {% if parsed and not parsed.error %}
+    fetch('/api/strategies/{{ strategy.id }}/equity-curve')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) return;
+            tradeData = data.trade_view;
+            timeData = data.time_view;
+            renderTradeView();
+        });
+    {% endif %}
+
+    function renderTradeView() {
+        if (!tradeData) return;
+        if (equityChart) equityChart.destroy();
+        var ctx = document.getElementById('equityChart');
+        if (!ctx) return;
+        equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: tradeData.labels,
+                datasets: [{
+                    label: 'Equity',
+                    data: tradeData.equity,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13,110,253,0.08)',
+                    fill: true,
+                    tension: 0.3,
+                    pointBackgroundColor: tradeData.colors,
+                    pointRadius: 5,
+                    pointHoverRadius: 7,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: false } }
+            }
+        });
+    }
+
+    function renderTimeView() {
+        if (!timeData || !timeData.dates || timeData.dates.length === 0) return;
+        if (equityChart) equityChart.destroy();
+        var ctx = document.getElementById('equityChart');
+        if (!ctx) return;
+        equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: timeData.dates,
+                datasets: [{
+                    label: 'Equity',
+                    data: timeData.equity,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13,110,253,0.08)',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: 0,
+                }, {
+                    label: 'Trades',
+                    data: timeData.trade_dates.map(function(d, i) {
+                        return { x: d, y: timeData.trade_equities[i] };
+                    }),
+                    type: 'scatter',
+                    pointBackgroundColor: timeData.trade_colors,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    showLine: false,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { type: 'category' },
+                    y: { beginAtZero: false }
+                }
+            }
+        });
+    }
+
+    var btnTrade = document.getElementById('btn-trade-view');
+    var btnTime = document.getElementById('btn-time-view');
+    if (btnTrade) btnTrade.addEventListener('click', function() {
+        btnTrade.classList.add('active'); btnTime.classList.remove('active');
+        renderTradeView();
+    });
+    if (btnTime) btnTime.addEventListener('click', function() {
+        btnTime.classList.add('active'); btnTrade.classList.remove('active');
+        renderTimeView();
+    });
+
+    // --- Auto-refresh if backtest running ---
+    {% if builder_state.running and builder_state.strategy_id == strategy.id %}
+    setTimeout(function() { window.location.reload(); }, 3000);
+    {% endif %}
+});
+</script>
+{% endblock %}

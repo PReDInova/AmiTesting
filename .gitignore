@@ -40,6 +40,11 @@ results/*.csv
 results/staged/
 results/*.status.json
 
+# Strategy builder generated files (keep structure, ignore output)
+strategies/*/results.*
+strategies/*/strategy.apx
+strategies/manifest.json
+
 # AmiBroker generated files
 *.apx.bak
 

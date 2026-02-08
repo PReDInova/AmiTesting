@@ -244,8 +244,13 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if '/afl' in request.path %}active{% endif %}" href="/afl">
+                        <a class="nav-link {% if '/afl' in request.path and '/strateg' not in request.path %}active{% endif %}" href="/afl">
                             <i class="bi bi-code-slash me-1"></i>AFL Editor
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if '/strateg' in request.path %}active{% endif %}" href="/strategy-builder">
+                            <i class="bi bi-plus-circle me-1"></i>Strategy Builder
                         </a>
                     </li>
                     <li class="nav-item">
@@ -305,7 +310,7 @@
     <!-- ── Footer ─────────────────────────────────────────── -->
     <footer class="site-footer">
         <div class="container-fluid px-4">
-            AmiTesting Dashboard &mdash; Sprint 2
+            AmiTesting Dashboard &mdash; Sprint 3
         </div>
     </footer>
 

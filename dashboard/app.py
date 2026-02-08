@@ -24,8 +24,9 @@ sys.path.insert(0, str(PROJECT_DIR))
 from config.settings import (
     RESULTS_DIR, RESULTS_HTML, RESULTS_CSV, PROJECT_ROOT, LOGS_DIR,
     AFL_STRATEGY_FILE, APX_TEMPLATE, APX_OUTPUT, AMIBROKER_DB_PATH,
-    BACKTEST_SETTINGS, LOG_FILE, AFL_DIR
+    BACKTEST_SETTINGS, LOG_FILE, AFL_DIR, STRATEGIES_DIR
 )
+from scripts import strategy_manager as sm
 
 import pandas as pd
 from flask import (
@@ -918,3 +919,317 @@ def api_backtest_status():
     with _backtest_lock:
         state = dict(_backtest_state)
     return jsonify(state)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 3: Strategy Builder routes
+# ---------------------------------------------------------------------------
+
+_builder_state = {
+    "running": False,
+    "strategy_id": None,
+    "strategy_name": None,
+    "started_at": None,
+    "finished_at": None,
+    "success": None,
+    "error": None,
+    "log": [],
+}
+_builder_lock = threading.Lock()
+
+
+def _run_strategy_backtest_background(strategy_id: str):
+    """Run a strategy backtest in a background thread."""
+    global _builder_state
+    with _builder_lock:
+        _builder_state["running"] = True
+        _builder_state["strategy_id"] = strategy_id
+        _builder_state["started_at"] = datetime.now(timezone.utc).isoformat()
+        _builder_state["finished_at"] = None
+        _builder_state["success"] = None
+        _builder_state["error"] = None
+        _builder_state["log"] = []
+
+    def _log(msg):
+        with _builder_lock:
+            _builder_state["log"].append({
+                "message": msg,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+
+    try:
+        meta = sm.get_strategy(strategy_id)
+
+        # Step 1: Build APX
+        _log("Building APX from AFL...")
+        ok, msg = sm.build_strategy_apx(strategy_id)
+        if not ok:
+            _log(f"APX build failed: {msg}")
+            with _builder_lock:
+                _builder_state["success"] = False
+                _builder_state["error"] = f"APX build failed: {msg}"
+            return
+
+        _log("APX built successfully.")
+
+        # Step 2: Run backtest via run.py style subprocess
+        _log("Starting AmiBroker backtest...")
+        apx_path = meta["apx_path"]
+        results_csv = meta["results_csv_path"]
+        results_html = meta["results_html_path"]
+
+        # Build a small runner script inline
+        runner_code = (
+            f"import sys; sys.path.insert(0, r'{PROJECT_ROOT}');\n"
+            f"from config.settings import setup_logging, AMIBROKER_DB_PATH;\n"
+            f"setup_logging();\n"
+            f"from scripts.ole_backtest import OLEBacktester;\n"
+            f"bt = OLEBacktester();\n"
+            f"ok = bt.run_full_test(\n"
+            f"    apx_path=r'{apx_path}',\n"
+            f"    results_html_path=r'{results_html}',\n"
+            f"    results_csv_path=r'{results_csv}',\n"
+            f");\n"
+            f"sys.exit(0 if ok else 1)\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", runner_code],
+            capture_output=True, text=True,
+            cwd=str(PROJECT_ROOT), timeout=600,
+        )
+
+        if result.returncode != 0:
+            err = result.stderr[-500:] if result.stderr else "Unknown error"
+            _log(f"Backtest failed: {err}")
+            with _builder_lock:
+                _builder_state["success"] = False
+                _builder_state["error"] = err
+            return
+
+        _log("Backtest completed.")
+
+        # Step 3: Validate results
+        csv_path = Path(results_csv)
+        if not csv_path.exists():
+            _log("No results CSV produced.")
+            with _builder_lock:
+                _builder_state["success"] = False
+                _builder_state["error"] = "Backtest ran but no results CSV was produced."
+            return
+
+        parsed = parse_results_csv(csv_path)
+        if parsed["error"]:
+            _log(f"Results parse error: {parsed['error']}")
+            with _builder_lock:
+                _builder_state["success"] = False
+                _builder_state["error"] = parsed["error"]
+            return
+
+        if len(parsed["trades"]) == 0:
+            _log("Zero trades produced. Buy/Sell signals may never trigger.")
+            with _builder_lock:
+                _builder_state["success"] = False
+                _builder_state["error"] = "Backtest produced zero trades. Check your Buy/Sell signal logic."
+            return
+
+        # Success
+        _log(f"Results validated: {len(parsed['trades'])} trades found.")
+        sm.update_strategy_status(strategy_id, "tested")
+
+        with _builder_lock:
+            _builder_state["success"] = True
+
+    except subprocess.TimeoutExpired:
+        _log("Backtest timed out after 10 minutes.")
+        with _builder_lock:
+            _builder_state["success"] = False
+            _builder_state["error"] = "Backtest timed out after 10 minutes."
+    except Exception as e:
+        _log(f"Unexpected error: {e}")
+        with _builder_lock:
+            _builder_state["success"] = False
+            _builder_state["error"] = str(e)
+    finally:
+        with _builder_lock:
+            _builder_state["running"] = False
+            _builder_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+
+
+@app.route("/strategy-builder")
+def strategy_builder():
+    """Strategy builder page -- create and test new strategies."""
+    strategies = sm.list_strategies()
+    with _builder_lock:
+        state = dict(_builder_state)
+        state["log"] = list(_builder_state["log"])
+    return render_template(
+        "strategy_builder.html",
+        strategies=strategies,
+        builder_state=state,
+        db_configured=bool(AMIBROKER_DB_PATH),
+    )
+
+
+@app.route("/strategy-builder/create", methods=["POST"])
+def strategy_builder_create():
+    """Create a new strategy from pasted AFL code."""
+    strategy_name = request.form.get("strategy_name", "").strip()
+    description = request.form.get("description", "").strip()
+    afl_content = request.form.get("afl_content", "").strip()
+
+    if not strategy_name:
+        flash("Strategy name is required.", "danger")
+        return redirect(url_for("strategy_builder"))
+
+    if not afl_content:
+        flash("AFL code is required.", "danger")
+        return redirect(url_for("strategy_builder"))
+
+    strategy_id = sm.create_strategy(
+        name=strategy_name,
+        description=description,
+        source="manual",
+        afl_content=afl_content,
+    )
+
+    flash(f"Strategy '{strategy_name}' created.", "success")
+    return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+
+@app.route("/strategies/<strategy_id>")
+def strategy_detail(strategy_id: str):
+    """Detail view for a specific strategy."""
+    try:
+        meta = sm.get_strategy(strategy_id)
+    except FileNotFoundError:
+        flash("Strategy not found.", "danger")
+        return redirect(url_for("strategy_builder"))
+
+    afl_content = sm.get_strategy_afl(strategy_id)
+    versions = sm.get_strategy_versions(strategy_id)
+
+    # Parse results if they exist
+    results_csv = Path(meta.get("results_csv_path", ""))
+    parsed = None
+    if results_csv.exists():
+        parsed = parse_results_csv(results_csv)
+
+    # Check for log content
+    log_content = ""
+    log_file = LOGS_DIR / "ole_backtest.log"
+    if log_file.exists():
+        try:
+            log_content = log_file.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    with _builder_lock:
+        state = dict(_builder_state)
+        state["log"] = list(_builder_state["log"])
+
+    return render_template(
+        "strategy_detail.html",
+        strategy=meta,
+        afl_content=afl_content,
+        versions=versions,
+        parsed=parsed,
+        log_content=log_content,
+        builder_state=state,
+        db_configured=bool(AMIBROKER_DB_PATH),
+    )
+
+
+@app.route("/strategies/<strategy_id>/save", methods=["POST"])
+def strategy_save_afl(strategy_id: str):
+    """Save edited AFL for a strategy."""
+    afl_content = request.form.get("afl_content", "").strip()
+    if not afl_content:
+        flash("AFL content cannot be empty.", "danger")
+        return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    ok, msg = sm.save_strategy_afl(strategy_id, afl_content)
+    if ok:
+        flash("AFL saved.", "success")
+    else:
+        flash(f"Error saving AFL: {msg}", "danger")
+
+    # Optionally create a version
+    version_label = request.form.get("version_label", "").strip()
+    create_version = request.form.get("create_version") == "on"
+    if create_version or version_label:
+        v_ok, v_msg = sm.save_strategy_version(strategy_id, afl_content,
+                                                 version_label)
+        if v_ok:
+            flash(f"Version saved: {v_msg}", "info")
+
+    return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+
+@app.route("/strategies/<strategy_id>/run", methods=["POST"])
+def strategy_run_backtest(strategy_id: str):
+    """Run backtest for a specific strategy."""
+    with _builder_lock:
+        if _builder_state["running"]:
+            flash("A strategy backtest is already running.", "warning")
+            return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    with _backtest_lock:
+        if _backtest_state["running"]:
+            flash("A backtest is already running.", "warning")
+            return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    if not AMIBROKER_DB_PATH:
+        flash("AMIBROKER_DB_PATH not configured.", "danger")
+        return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    try:
+        meta = sm.get_strategy(strategy_id)
+    except FileNotFoundError:
+        flash("Strategy not found.", "danger")
+        return redirect(url_for("strategy_builder"))
+
+    with _builder_lock:
+        _builder_state["strategy_name"] = meta["name"]
+
+    thread = threading.Thread(
+        target=_run_strategy_backtest_background,
+        args=(strategy_id,),
+        daemon=True,
+    )
+    thread.start()
+    flash("Backtest started for strategy.", "info")
+    return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+
+@app.route("/strategies/<strategy_id>/delete", methods=["POST"])
+def strategy_delete(strategy_id: str):
+    """Delete a strategy."""
+    sm.delete_strategy(strategy_id)
+    flash("Strategy deleted.", "info")
+    return redirect(url_for("strategy_builder"))
+
+
+@app.route("/api/strategy-builder/status")
+def api_strategy_builder_status():
+    """JSON endpoint for polling builder progress."""
+    with _builder_lock:
+        state = dict(_builder_state)
+        state["log"] = list(_builder_state["log"])
+    return jsonify(state)
+
+
+@app.route("/api/strategies/<strategy_id>/equity-curve")
+def api_strategy_equity_curve(strategy_id: str):
+    """JSON equity curve for a strategy's results."""
+    try:
+        meta = sm.get_strategy(strategy_id)
+    except FileNotFoundError:
+        return jsonify({"error": "Strategy not found"}), 404
+
+    results_csv = Path(meta.get("results_csv_path", ""))
+    if not results_csv.exists():
+        return jsonify({"error": "No results yet"}), 404
+
+    data = compute_equity_curve(results_csv)
+    return jsonify(data)

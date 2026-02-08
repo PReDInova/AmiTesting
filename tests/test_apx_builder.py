@@ -83,10 +83,10 @@ class TestBuildApxSuccess:
         assert equity_elem is not None, "InitialEquity element was not preserved"
         assert equity_elem.text == "100000"
 
-        # The template fixture includes <MaxOpenPositions>1</MaxOpenPositions>
-        max_pos_elem = root.find(".//MaxOpenPositions")
-        assert max_pos_elem is not None, "MaxOpenPositions element was not preserved"
-        assert max_pos_elem.text == "1"
+        # The template fixture includes <ReverseSignalForcesExit>1</ReverseSignalForcesExit>
+        reverse_elem = root.find(".//ReverseSignalForcesExit")
+        assert reverse_elem is not None, "ReverseSignalForcesExit element was not preserved"
+        assert reverse_elem.text == "1"
 
 
 # ---------------------------------------------------------------------------

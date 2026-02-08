@@ -44,17 +44,16 @@ def tmp_apx_template(tmp_path):
     """Write a minimal valid APX XML template with a <FormulaContent> element."""
     xml_content = (
         '<?xml version="1.0" encoding="ISO-8859-1"?>\n'
-        '<AmiBrokerProject SchemaVersion="1">\n'
-        "  <General>\n"
-        "    <FormulaPath></FormulaPath>\n"
-        "    <FormulaContent></FormulaContent>\n"
-        "    <IncludeFilter>*</IncludeFilter>\n"
-        "  </General>\n"
-        "  <Backtest>\n"
-        "    <InitialEquity>100000</InitialEquity>\n"
-        "    <MaxOpenPositions>1</MaxOpenPositions>\n"
-        "  </Backtest>\n"
-        "</AmiBrokerProject>\n"
+        '<AmiBroker-Analysis CompactMode="0">\n'
+        "<General>\n"
+        "<FormulaPath></FormulaPath>\n"
+        "<FormulaContent></FormulaContent>\n"
+        "</General>\n"
+        "<BacktestSettings>\n"
+        "<InitialEquity>100000</InitialEquity>\n"
+        "<ReverseSignalForcesExit>1</ReverseSignalForcesExit>\n"
+        "</BacktestSettings>\n"
+        "</AmiBroker-Analysis>\n"
     )
     template_file = tmp_path / "base.apx"
     template_file.write_text(xml_content, encoding="utf-8")
@@ -70,12 +69,11 @@ def tmp_apx_template_no_formula(tmp_path):
     """Write an APX XML template that is missing the <FormulaContent> element."""
     xml_content = (
         '<?xml version="1.0" encoding="ISO-8859-1"?>\n'
-        '<AmiBrokerProject SchemaVersion="1">\n'
-        "  <General>\n"
-        "    <FormulaPath></FormulaPath>\n"
-        "    <IncludeFilter>*</IncludeFilter>\n"
-        "  </General>\n"
-        "</AmiBrokerProject>\n"
+        '<AmiBroker-Analysis CompactMode="0">\n'
+        "<General>\n"
+        "<FormulaPath></FormulaPath>\n"
+        "</General>\n"
+        "</AmiBroker-Analysis>\n"
     )
     template_file = tmp_path / "no_formula.apx"
     template_file.write_text(xml_content, encoding="utf-8")

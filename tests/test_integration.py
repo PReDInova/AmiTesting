@@ -55,8 +55,8 @@ class TestApxBuilderPipeline:
         tree = ET.parse(result_path)
         root = tree.getroot()
 
-        assert root.tag == "AmiBrokerProject"
-        assert root.attrib.get("SchemaVersion") == "1"
+        assert root.tag == "AmiBroker-Analysis"
+        assert root.attrib.get("CompactMode") == "0"
 
         # FormulaContent should contain the AFL source
         formula_elem = root.find(".//FormulaContent")
@@ -64,17 +64,17 @@ class TestApxBuilderPipeline:
         assert "MA(Close" in formula_elem.text
         assert "Cross(" in formula_elem.text
 
-        # Backtest settings should still be present
-        backtest_elem = root.find(".//Backtest")
+        # BacktestSettings should still be present
+        backtest_elem = root.find(".//BacktestSettings")
         assert backtest_elem is not None
 
         equity_elem = root.find(".//InitialEquity")
         assert equity_elem is not None
         assert equity_elem.text == "100000"
 
-        point_value_elem = root.find(".//PointValue")
-        assert point_value_elem is not None
-        assert point_value_elem.text == "100"
+        margin_elem = root.find(".//MarginRequirement")
+        assert margin_elem is not None
+        assert margin_elem.text == "100"
 
 
 # ---------------------------------------------------------------------------

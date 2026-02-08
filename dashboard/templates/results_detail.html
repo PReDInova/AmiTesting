@@ -12,6 +12,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/selection/active-line.min.js"></script>
 <!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Lightweight Charts (TradingView) for candlestick charts -->
+<script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 
 <style>
     /* ── CodeMirror Overrides ──────────────────────────── */
@@ -126,6 +128,31 @@
     #versionPreviewBody {
         max-height: 400px;
         overflow-y: auto;
+    }
+
+    /* ── Candlestick Chart (Sprint 3) ────────────────── */
+    .trade-row-clickable {
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    .trade-row-clickable:hover {
+        background-color: rgba(59, 130, 246, 0.08) !important;
+        outline: 2px solid rgba(59, 130, 246, 0.3);
+        outline-offset: -2px;
+    }
+    #candlestickChartContainer {
+        width: 100%;
+        height: 400px;
+        position: relative;
+    }
+    .chart-loading-overlay {
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.9);
+        z-index: 10;
     }
 </style>
 {% endblock %}
@@ -538,15 +565,23 @@
                             {% if profit_col and trade.get(profit_col, "") != "" %}
                                 {% set pval = trade[profit_col] | float(0) %}
                                 {% if pval > 0 %}
-                        <tr class="trade-win">
+                        <tr class="trade-win trade-row-clickable"
                                 {% elif pval < 0 %}
-                        <tr class="trade-loss">
+                        <tr class="trade-loss trade-row-clickable"
                                 {% else %}
-                        <tr>
+                        <tr class="trade-row-clickable"
                                 {% endif %}
                             {% else %}
-                        <tr>
+                        <tr class="trade-row-clickable"
                             {% endif %}
+                            data-symbol="{{ trade.get('Symbol', '') }}"
+                            data-entry-date="{{ trade.get('Date', '') }}"
+                            data-exit-date="{{ trade.get('Ex. date', '') }}"
+                            data-entry-price="{{ trade.get('Price', '') }}"
+                            data-exit-price="{{ trade.get('Ex. Price', '') }}"
+                            data-trade-type="{{ trade.get('Trade', '') }}"
+                            data-profit="{{ trade.get('Profit', '') }}"
+                            data-trade-index="{{ loop.index }}">
                             <td class="text-muted">{{ loop.index }}</td>
                             {% for col in parsed.columns %}
                             <td>{{ trade[col] }}</td>
@@ -555,7 +590,15 @@
                         {% else %}
                             {# Structured trade objects #}
                             {% set profit = trade.profit|default(0)|float %}
-                        <tr class="{{ 'trade-win' if profit > 0 else ('trade-loss' if profit < 0 else '') }}">
+                        <tr class="trade-row-clickable {{ 'trade-win' if profit > 0 else ('trade-loss' if profit < 0 else '') }}"
+                            data-symbol="{{ trade.symbol|default('') }}"
+                            data-entry-date="{{ trade.entry_date|default('') }}"
+                            data-exit-date="{{ trade.exit_date|default('') }}"
+                            data-entry-price="{{ trade.entry_price|default('') }}"
+                            data-exit-price="{{ trade.exit_price|default('') }}"
+                            data-trade-type="{{ trade.type|default('') }}"
+                            data-profit="{{ trade.profit|default('') }}"
+                            data-trade-index="{{ loop.index }}">
                             <td class="text-muted">{{ loop.index }}</td>
                             <td class="fw-semibold">{{ trade.symbol|default('--') }}</td>
                             <td>
@@ -727,6 +770,52 @@
                 </div>
             </div>
             <div class="modal-footer py-2">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Candlestick Chart Modal (Sprint 3)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+<div class="modal fade" id="candlestickModal" tabindex="-1" aria-labelledby="candlestickModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title" id="candlestickModalLabel">
+                    <i class="bi bi-bar-chart-line me-1"></i>
+                    Trade Chart: <span id="chartTradeTitle">--</span>
+                </h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0">
+                {# Trade summary row #}
+                <div class="px-3 py-2 border-bottom bg-light d-flex flex-wrap gap-3" style="font-size: 0.85rem;">
+                    <span><strong>Direction:</strong> <span id="chartDirection">--</span></span>
+                    <span><strong>Entry:</strong> <span id="chartEntryInfo">--</span></span>
+                    <span><strong>Exit:</strong> <span id="chartExitInfo">--</span></span>
+                    <span><strong>P&amp;L:</strong> <span id="chartPnL">--</span></span>
+                </div>
+                {# Chart container #}
+                <div id="candlestickChartContainer">
+                    <div class="chart-loading-overlay" id="chartLoading">
+                        <div class="text-center">
+                            <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                            <p class="text-muted mt-2 mb-0" style="font-size: 0.85rem;">Loading chart data from AmiBroker...</p>
+                        </div>
+                    </div>
+                </div>
+                {# Error state #}
+                <div id="chartError" class="d-none p-3">
+                    <div class="callout-amber">
+                        <i class="bi bi-exclamation-circle me-1"></i>
+                        <span id="chartErrorMsg">Unable to load chart data.</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer py-2">
+                <small class="text-muted me-auto">1-min candlestick data from AmiBroker database</small>
                 <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
@@ -1057,6 +1146,207 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     }
+
+    /* ═══════════════════════════════════════════════════════
+       CANDLESTICK CHART — Trade Click Handler (Sprint 3)
+       ═══════════════════════════════════════════════════════ */
+    var candlestickChart = null;
+    var candlestickModal = null;
+
+    document.querySelectorAll('.trade-row-clickable').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            if (e.target.closest('a, button')) return;
+
+            var symbol = this.dataset.symbol;
+            var entryDate = this.dataset.entryDate;
+            var exitDate = this.dataset.exitDate;
+            var entryPrice = parseFloat(this.dataset.entryPrice);
+            var exitPrice = parseFloat(this.dataset.exitPrice);
+            var tradeType = this.dataset.tradeType;
+            var tradeIndex = this.dataset.tradeIndex;
+            var profit = parseFloat(this.dataset.profit) || 0;
+
+            if (!symbol || !entryDate || !exitDate) return;
+
+            showCandlestickChart(symbol, entryDate, exitDate, entryPrice, exitPrice, tradeType, tradeIndex, profit);
+        });
+    });
+
+    function showCandlestickChart(symbol, entryDate, exitDate, entryPrice, exitPrice, tradeType, tradeIndex, profit) {
+        if (!candlestickModal) {
+            candlestickModal = new bootstrap.Modal(document.getElementById('candlestickModal'));
+        }
+
+        // Reset UI
+        document.getElementById('chartLoading').style.display = 'flex';
+        document.getElementById('chartError').classList.add('d-none');
+        document.getElementById('chartTradeTitle').textContent = symbol + ' \u2014 Trade #' + tradeIndex;
+        document.getElementById('chartDirection').textContent = tradeType;
+        document.getElementById('chartEntryInfo').textContent = entryPrice.toFixed(1) + ' @ ' + entryDate;
+        document.getElementById('chartExitInfo').textContent = exitPrice.toFixed(1) + ' @ ' + exitDate;
+
+        var pnlEl = document.getElementById('chartPnL');
+        pnlEl.textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2);
+        pnlEl.className = profit >= 0 ? 'text-success fw-bold' : 'text-danger fw-bold';
+
+        // Destroy previous chart
+        var container = document.getElementById('candlestickChartContainer');
+        if (candlestickChart) {
+            candlestickChart.remove();
+            candlestickChart = null;
+        }
+        // Clear container and re-add loading overlay
+        var loadingEl = document.getElementById('chartLoading');
+        container.innerHTML = '';
+        container.appendChild(loadingEl);
+        loadingEl.style.display = 'flex';
+
+        candlestickModal.show();
+
+        // Fetch OHLCV data
+        var url = '/api/ohlcv/' + encodeURIComponent(symbol)
+            + '?entry_date=' + encodeURIComponent(entryDate)
+            + '&exit_date=' + encodeURIComponent(exitDate);
+
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                loadingEl.style.display = 'none';
+
+                if (data.error) {
+                    document.getElementById('chartErrorMsg').textContent = data.error;
+                    document.getElementById('chartError').classList.remove('d-none');
+                    return;
+                }
+
+                if (!data.data || data.data.length === 0) {
+                    document.getElementById('chartErrorMsg').textContent = 'No bar data available for this date range.';
+                    document.getElementById('chartError').classList.remove('d-none');
+                    return;
+                }
+
+                renderCandlestickChart(container, data.data, entryDate, exitDate, entryPrice, exitPrice, tradeType);
+            })
+            .catch(function(err) {
+                loadingEl.style.display = 'none';
+                document.getElementById('chartErrorMsg').textContent = 'Failed to fetch chart data: ' + err.message;
+                document.getElementById('chartError').classList.remove('d-none');
+            });
+    }
+
+    function renderCandlestickChart(container, bars, entryDate, exitDate, entryPrice, exitPrice, tradeType) {
+        candlestickChart = LightweightCharts.createChart(container, {
+            width: container.clientWidth,
+            height: 400,
+            layout: {
+                background: { type: 'solid', color: '#ffffff' },
+                textColor: '#333',
+                fontSize: 11,
+            },
+            grid: {
+                vertLines: { color: 'rgba(197, 203, 206, 0.4)' },
+                horzLines: { color: 'rgba(197, 203, 206, 0.4)' },
+            },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.8)' },
+            timeScale: {
+                borderColor: 'rgba(197, 203, 206, 0.8)',
+                timeVisible: true,
+                secondsVisible: false,
+            },
+        });
+
+        // Candlestick series
+        var candleSeries = candlestickChart.addCandlestickSeries({
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderDownColor: '#ef5350',
+            borderUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+            wickUpColor: '#26a69a',
+        });
+        candleSeries.setData(bars);
+
+        // Volume histogram
+        var volumeSeries = candlestickChart.addHistogramSeries({
+            color: 'rgba(76, 175, 80, 0.3)',
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+        });
+        candlestickChart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.8, bottom: 0 },
+        });
+        var volumeData = bars.map(function(b) {
+            return {
+                time: b.time,
+                value: b.volume || 0,
+                color: b.close >= b.open ? 'rgba(38,166,154,0.3)' : 'rgba(239,83,80,0.3)',
+            };
+        });
+        volumeSeries.setData(volumeData);
+
+        // Entry / exit markers
+        var markers = [];
+        var entryTime = findClosestBarTime(bars, entryDate);
+        var exitTime = findClosestBarTime(bars, exitDate);
+
+        if (entryTime) {
+            markers.push({
+                time: entryTime,
+                position: 'belowBar',
+                color: '#2196F3',
+                shape: 'arrowUp',
+                text: 'Entry @ ' + entryPrice.toFixed(1),
+            });
+        }
+        if (exitTime) {
+            markers.push({
+                time: exitTime,
+                position: 'aboveBar',
+                color: '#FF9800',
+                shape: 'arrowDown',
+                text: 'Exit @ ' + exitPrice.toFixed(1),
+            });
+        }
+        if (markers.length > 0) {
+            markers.sort(function(a, b) { return a.time - b.time; });
+            candleSeries.setMarkers(markers);
+        }
+
+        // Auto-resize on container resize
+        var resizeObserver = new ResizeObserver(function(entries) {
+            for (var entry of entries) {
+                candlestickChart.applyOptions({ width: entry.contentRect.width });
+            }
+        });
+        resizeObserver.observe(container);
+
+        document.getElementById('candlestickModal').addEventListener('hidden.bs.modal', function() {
+            resizeObserver.disconnect();
+        }, { once: true });
+
+        candlestickChart.timeScale().fitContent();
+    }
+
+    function findClosestBarTime(bars, dateStr) {
+        // Parse the date string (format: "7/21/2025 1:14:50 AM")
+        var targetDate = new Date(dateStr);
+        if (isNaN(targetDate.getTime())) return null;
+
+        var targetTs = Math.floor(targetDate.getTime() / 1000);
+        var closest = null;
+        var closestDiff = Infinity;
+
+        for (var i = 0; i < bars.length; i++) {
+            var diff = Math.abs(bars[i].time - targetTs);
+            if (diff < closestDiff) {
+                closestDiff = diff;
+                closest = bars[i].time;
+            }
+        }
+        return closest;
+    }
+
 
     /* ═══════════════════════════════════════════════════════
        VERSION PREVIEW — Modal Fetch

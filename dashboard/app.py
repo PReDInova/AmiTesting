@@ -24,7 +24,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 from config.settings import (
     RESULTS_DIR, RESULTS_HTML, RESULTS_CSV, PROJECT_ROOT, LOGS_DIR,
     AFL_STRATEGY_FILE, APX_TEMPLATE, APX_OUTPUT, AMIBROKER_DB_PATH,
-    BACKTEST_SETTINGS, LOG_FILE, AFL_DIR
+    BACKTEST_SETTINGS, LOG_FILE, AFL_DIR, CHART_SETTINGS
 )
 
 import pandas as pd
@@ -64,6 +64,14 @@ _backtest_state = {
     "pid": None,
 }
 _backtest_lock = threading.Lock()
+
+
+@app.context_processor
+def inject_backtest_state():
+    """Make backtest_running available to all templates (for navbar spinner)."""
+    with _backtest_lock:
+        return {"backtest_running": _backtest_state["running"]}
+
 
 # ---------------------------------------------------------------------------
 # Strategy database (replaces hardcoded STRATEGY_DESCRIPTIONS)
@@ -256,6 +264,16 @@ def get_afl_content() -> str:
             logger.error("Failed to read AFL file %s: %s", AFL_STRATEGY_FILE, exc)
             return ""
     return ""
+
+
+def validate_afl_content(content: str) -> list[str]:
+    """Run AFL pre-flight checks and return a list of warning strings.
+
+    Returns an empty list when the AFL passes all checks.
+    """
+    from scripts.afl_validator import validate_afl
+    ok, errors = validate_afl(content)
+    return errors
 
 
 def save_afl_content(content: str) -> tuple:
@@ -772,6 +790,11 @@ def afl_save():
         flash("AFL content cannot be empty.", "danger")
         return redirect(url_for("afl_editor"))
 
+    # Pre-flight validation -- warn but don't block save
+    afl_warnings = validate_afl_content(content)
+    for warning in afl_warnings:
+        flash(f"AFL warning: {warning}", "warning")
+
     # Always save the AFL and rebuild APX
     success, message = save_afl_content(content)
     if success:
@@ -871,3 +894,65 @@ def api_backtest_status():
     with _backtest_lock:
         state = dict(_backtest_state)
     return jsonify(state)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 3 routes -- Trade candlestick charts
+# ---------------------------------------------------------------------------
+
+
+@app.route("/api/ohlcv/<symbol>")
+def api_ohlcv(symbol: str):
+    """Return 1-minute OHLCV candlestick data for *symbol* around a trade.
+
+    Query parameters:
+        entry_date  -- trade entry datetime (CSV format: ``7/21/2025 1:14:50 AM``)
+        exit_date   -- trade exit datetime (same format)
+    """
+    from scripts.ole_stock_data import get_ohlcv_cached
+
+    entry_date_str = request.args.get("entry_date", "").strip()
+    exit_date_str = request.args.get("exit_date", "").strip()
+
+    if not entry_date_str or not exit_date_str:
+        return jsonify({"data": [], "error": "entry_date and exit_date are required."}), 400
+
+    # Parse the CSV date format (e.g. "7/21/2025 1:14:50 AM")
+    entry_dt = _parse_trade_date(entry_date_str)
+    exit_dt = _parse_trade_date(exit_date_str)
+
+    if entry_dt is None or exit_dt is None:
+        return jsonify({"data": [], "error": f"Invalid date format. Got entry='{entry_date_str}', exit='{exit_date_str}'."}), 400
+
+    result = get_ohlcv_cached(
+        symbol=symbol,
+        start_dt=entry_dt,
+        end_dt=exit_dt,
+        padding_before=CHART_SETTINGS["bars_before_entry"],
+        padding_after=CHART_SETTINGS["bars_after_exit"],
+    )
+
+    if result["error"] and "not running" in result["error"].lower():
+        return jsonify(result), 503
+    if result["error"] and "not found" in result["error"].lower():
+        return jsonify(result), 404
+    if result["error"]:
+        return jsonify(result), 503
+
+    return jsonify(result)
+
+
+def _parse_trade_date(date_str: str) -> datetime | None:
+    """Try several date formats common in AmiBroker CSV exports."""
+    formats = [
+        "%m/%d/%Y %I:%M:%S %p",   # 7/21/2025 1:14:50 AM
+        "%m/%d/%Y %H:%M:%S",       # 7/21/2025 13:14:50
+        "%Y-%m-%d %H:%M:%S",       # 2025-07-21 13:14:50
+        "%Y-%m-%dT%H:%M:%S",       # ISO format
+    ]
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    return None

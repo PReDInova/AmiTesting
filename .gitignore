@@ -48,6 +48,9 @@ data/*.db-shm
 # AmiBroker generated files
 *.apx.bak
 
+# OHLCV chart cache (auto-generated)
+cache/*.json
+
 # Pytest
 .pytest_cache/
 

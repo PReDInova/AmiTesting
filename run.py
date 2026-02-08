@@ -31,6 +31,7 @@ from config.settings import (
     RESULTS_HTML,
     RESULTS_CSV,
 )
+from scripts.afl_validator import validate_afl_file
 from scripts.apx_builder import build_apx
 from scripts.ole_backtest import OLEBacktester
 
@@ -68,8 +69,18 @@ def main() -> int:
         return 1
 
     try:
-        # --- Step 1: Build .apx file ---------------------------------------
-        logger.info("Step 1 — Building .apx file ...")
+        # --- Step 1a: Validate AFL -----------------------------------------
+        logger.info("Step 1a — Validating AFL ...")
+        afl_ok, afl_errors = validate_afl_file(str(AFL_STRATEGY_FILE))
+        if not afl_ok:
+            for err in afl_errors:
+                logger.error("AFL validation: %s", err)
+            logger.error("AFL validation failed — aborting pipeline.")
+            return 1
+        logger.info("AFL validation passed.")
+
+        # --- Step 1b: Build .apx file --------------------------------------
+        logger.info("Step 1b — Building .apx file ...")
         apx_path = build_apx(
             str(AFL_STRATEGY_FILE),
             str(APX_OUTPUT),

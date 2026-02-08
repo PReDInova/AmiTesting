@@ -46,6 +46,8 @@ RESULTS_CSV: Path = RESULTS_DIR / "results.csv"
 
 LOG_FILE: Path = LOGS_DIR / "ole_backtest.log"
 
+CACHE_DIR: Path = PROJECT_ROOT / "cache"
+
 # ---------------------------------------------------------------------------
 # Backtest settings
 # ---------------------------------------------------------------------------
@@ -54,6 +56,17 @@ BACKTEST_SETTINGS: dict = {
     "run_mode": 2,            # 2 = portfolio backtest
     "poll_interval": 0.5,     # seconds between status polls
     "max_wait": 300,          # maximum seconds to wait for completion
+    "starting_capital": 100_000,  # must match APX template <InitialEquity>
+}
+
+# ---------------------------------------------------------------------------
+# Chart settings (Sprint 3 -- trade candlestick charts)
+# ---------------------------------------------------------------------------
+
+CHART_SETTINGS: dict = {
+    "bars_before_entry": 50,    # 1-min bars of context before trade entry
+    "bars_after_exit": 20,      # 1-min bars of context after trade exit
+    "cache_max_age_hours": 24,  # re-fetch from AmiBroker if cache older than this
 }
 
 # ---------------------------------------------------------------------------

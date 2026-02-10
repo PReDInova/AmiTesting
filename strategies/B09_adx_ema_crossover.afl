@@ -1,0 +1,114 @@
+// ===========================================
+// B09 - ADX-Filtered EMA Crossover
+// ===========================================
+//
+// Trend-following strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Uses standard EMA crossover signals filtered by ADX
+// to avoid entries during dead-flat periods when directional movement is
+// insufficient. RSI provides additional overbought/oversold confirmation.
+//
+// Entry Long:  Fast EMA crosses above Slow EMA AND ADX > threshold
+//              AND RSI < 70 (not overbought)
+// Entry Short: Slow EMA crosses above Fast EMA AND ADX > threshold
+//              AND RSI > 30 (not oversold)
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+emaFast      = Param("EMA Fast", 20, 5, 30, 1);
+emaSlow      = Param("EMA Slow", 50, 20, 100, 5);
+adxPer       = Param("ADX Period", 14, 5, 50, 1);
+adxThreshold = Param("ADX Threshold", 25, 15, 40, 1);
+rsiPeriod    = Param("RSI Period", 14, 7, 21, 7);
+sdMult       = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdMultiplier = sdMult;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- EMA Calculations (AmiBroker built-ins) ----
+fastEMA = EMA(Close, emaFast);
+slowEMA = EMA(Close, emaSlow);
+
+// ---- RSI Calculation (AmiBroker built-in) ----
+rsiVal = RSI(rsiPeriod);
+
+// ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
+adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
+adxATR     = Wilders(adxTR, adxPer);
+adxPlusDM  = IIf(High - Ref(High, -1) > Ref(Low, -1) - Low AND High - Ref(High, -1) > 0, High - Ref(High, -1), 0);
+adxMinusDM = IIf(Ref(Low, -1) - Low > High - Ref(High, -1) AND Ref(Low, -1) - Low > 0, Ref(Low, -1) - Low, 0);
+plusDI      = 100 * Wilders(adxPlusDM, adxPer) / adxATR;
+minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
+DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
+ADXvalue    = Wilders(DX, adxPer);
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session, ADX trend, and RSI) ----
+trendActive = ADXvalue > adxThreshold;
+
+buySignal   = Cross(fastEMA, slowEMA) AND trendActive AND rsiVal < 70 AND asianSession;
+shortSignal = Cross(slowEMA, fastEMA) AND trendActive AND rsiVal > 30 AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+fastEMA1m  = fastEMA;
+slowEMA1m  = slowEMA;
+exitDist1m = exitDistance;
+adx1m      = ADXvalue;
+rsi1m      = rsiVal;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+fastEMA1m   = TimeFrameExpand(fastEMA1m, in1Minute);
+slowEMA1m   = TimeFrameExpand(slowEMA1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+adx1m       = TimeFrameExpand(adx1m, in1Minute);
+rsi1m       = TimeFrameExpand(rsi1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(fastEMA1m, "EMA(" + NumToStr(emaFast, 1.0) + ")", colorBrightGreen, styleLine | styleThick);
+Plot(slowEMA1m, "EMA(" + NumToStr(emaSlow, 1.0) + ")", colorOrange, styleLine | styleThick);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | B09 ADX-EMA Crossover | EMA(" + NumToStr(emaFast, 1.0) +
+        "/" + NumToStr(emaSlow, 1.0) + ")" +
+        " ADX(" + NumToStr(adxPer, 1.0) + ")>" + NumToStr(adxThreshold, 1.0) +
+        " RSI(" + NumToStr(rsiPeriod, 1.0) + ")" +
+        " | ADX=" + NumToStr(adx1m, 1.1) +
+        " RSI=" + NumToStr(rsi1m, 1.1) +
+        " | SD x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

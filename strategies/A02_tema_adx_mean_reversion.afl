@@ -1,0 +1,106 @@
+// ===========================================
+// A02 - TEMA + ADX Anti-Trend (Mean Reversion)
+// ===========================================
+//
+// Mean-reversion strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). When ADX is LOW (no trend), uses TEMA crossovers
+// as mean reversion signals. The logic is contrarian: when the market
+// is range-bound (low ADX), price deviations from TEMA tend to revert.
+//
+// Entry Long:  TEMA crosses above Close AND ADX < adxMaxThreshold
+//              (price fell below TEMA in a ranging market -> buy the dip)
+// Entry Short: Close crosses above TEMA AND ADX < adxMaxThreshold
+//              (price rose above TEMA in a ranging market -> sell the rip)
+//
+// Exit: StdDev-based symmetric stops with tighter multiplier (0.75)
+//       since ranging markets have smaller excursions
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+temaLength      = Param("TEMA Length", 21, 5, 100, 1);
+adxPer          = Param("ADX Period", 14, 5, 50, 1);
+adxMaxThreshold = Param("ADX Max Threshold", 20, 10, 30, 1);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult          = Param("StdDev Multiplier", 0.75, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- TEMA Indicator (from indicator library) ----
+smoothingLength = temaLength;
+sourcePrice = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
+adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
+adxATR     = Wilders(adxTR, adxPer);
+adxPlusDM  = IIf(High - Ref(High, -1) > Ref(Low, -1) - Low AND High - Ref(High, -1) > 0, High - Ref(High, -1), 0);
+adxMinusDM = IIf(Ref(Low, -1) - Low > High - Ref(High, -1) AND Ref(Low, -1) - Low > 0, Ref(Low, -1) - Low, 0);
+plusDI      = 100 * Wilders(adxPlusDM, adxPer) / adxATR;
+minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
+DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
+ADXvalue    = Wilders(DX, adxPer);
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session and LOW ADX = no trend) ----
+noTrend = ADXvalue < adxMaxThreshold;
+
+buySignal   = Cross(temas, Close) AND noTrend AND asianSession;
+shortSignal = Cross(Close, temas) AND noTrend AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+tema1m     = temas;
+exitDist1m = exitDistance;
+adx1m      = ADXvalue;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+tema1m      = TimeFrameExpand(tema1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+adx1m       = TimeFrameExpand(adx1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine | styleThick);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | A02 TEMA+ADX Mean Reversion | TEMA(" + NumToStr(temaLength, 1.0) +
+        ") ADX(" + NumToStr(adxPer, 1.0) + ")<" + NumToStr(adxMaxThreshold, 1.0) +
+        " | ADX=" + NumToStr(adx1m, 1.1) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

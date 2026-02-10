@@ -1,0 +1,114 @@
+// ===========================================
+// B06 - Session VWAP Mean Reversion Enhanced
+// ===========================================
+//
+// Enhanced VWAP mean reversion strategy for /GC Gold Futures during the
+// Asian session (6 PM - 3 AM EST). Extends basic VWAP reversion by adding
+// TEMA derivative confirmation. Enters long when price is below a selected
+// VWAP deviation band but TEMA is turning upward (momentum shifting back
+// toward mean). Enters short when price is above a selected upper band
+// but TEMA is turning downward.
+//
+// Entry Long:  Close < entry lower band AND TEMA derivative > 0 AND Asian session
+// Entry Short: Close > entry upper band AND TEMA derivative < 0 AND Asian session
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+temaLength  = Param("TEMA Length", 21, 5, 100, 1);
+entrySigma  = Param("Entry Sigma", 1, 1, 3, 1);
+sdBars      = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult      = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- VWAP Clouds Indicator (from indicator library) ----
+vwStdev1 = 1;
+vwStdev2 = 2;
+vwStdev3 = 3;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
+
+// ---- TEMA Indicator (from indicator library) ----
+smoothingLength = temaLength;
+sourcePrice = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+
+// ---- TEMA Derivative (momentum confirmation) ----
+temaDerivative = temas - Ref(temas, -3);
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Select entry band level based on entrySigma parameter ----
+entryLower = IIf(entrySigma == 1, s1, IIf(entrySigma == 2, s2, s3));
+entryUpper = IIf(entrySigma == 1, r1, IIf(entrySigma == 2, r2, r3));
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session, VWAP bands, and TEMA derivative) ----
+buySignal   = Close < entryLower AND temaDerivative > 0 AND asianSession;
+shortSignal = Close > entryUpper AND temaDerivative < 0 AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+vwap1m       = VWAP;
+entryUpper1m = entryUpper;
+entryLower1m = entryLower;
+tema1m       = temas;
+temaDeriv1m  = temaDerivative;
+exitDist1m   = exitDistance;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+vwap1m       = TimeFrameExpand(vwap1m, in1Minute);
+entryUpper1m = TimeFrameExpand(entryUpper1m, in1Minute);
+entryLower1m = TimeFrameExpand(entryLower1m, in1Minute);
+tema1m       = TimeFrameExpand(tema1m, in1Minute);
+temaDeriv1m  = TimeFrameExpand(temaDeriv1m, in1Minute);
+exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(vwap1m, "VWAP", colorYellow, styleLine | styleThick);
+Plot(entryUpper1m, "Entry Upper (sigma=" + NumToStr(entrySigma, 1.0) + ")", colorOrange, styleLine);
+Plot(entryLower1m, "Entry Lower (sigma=" + NumToStr(entrySigma, 1.0) + ")", colorOrange, styleLine);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | B06 VWAP Enhanced Reversion | VWAP Sigma=" + NumToStr(entrySigma, 1.0) +
+        " TEMA(" + NumToStr(temaLength, 1.0) + ")" +
+        " | TEMA'=" + NumToStr(temaDeriv1m, 1.4) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

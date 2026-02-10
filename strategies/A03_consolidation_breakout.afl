@@ -1,0 +1,106 @@
+// ===========================================
+// A03 - Consolidation Zone Breakout
+// ===========================================
+//
+// Breakout strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Detects consolidation zones using TEMA derivative
+// flatness and price range tightness, then trades the breakout when
+// price exits the zone with momentum.
+//
+// Entry Long:  czBreakoutUp signal (price breaks above consolidation zone)
+// Entry Short: czBreakoutDown signal (price breaks below consolidation zone)
+//
+// Exit: StdDev-based symmetric stops with wider multiplier (1.5)
+//       to give breakout trades room to develop
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+czTemaLength    = Param("CZ TEMA Length", 21, 5, 50, 1);
+czFlatThreshold = Param("CZ Flat Threshold", 0.50, 0.05, 2.0, 0.05);
+czMaxRangeTicks = Param("CZ Max Range (ticks)", 80, 20, 200, 5);
+czMinConsolBars = Param("CZ Min Consol Bars", 5, 1, 30, 1);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult          = Param("StdDev Multiplier", 1.5, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Consolidation Zone Indicator (from indicator library) ----
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session) ----
+buySignal   = czBreakoutUp AND asianSession;
+shortSignal = czBreakoutDown AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+exitDist1m    = exitDistance;
+czHigh1m      = czHigh;
+czLow1m       = czLow;
+czMid1m       = czMid;
+isConsol1m    = isConsolidating;
+czStrength1m  = czStrength;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
+czHigh1m     = TimeFrameExpand(czHigh1m, in1Minute);
+czLow1m      = TimeFrameExpand(czLow1m, in1Minute);
+czMid1m      = TimeFrameExpand(czMid1m, in1Minute);
+isConsol1m   = TimeFrameExpand(isConsol1m, in1Minute);
+czStrength1m = TimeFrameExpand(czStrength1m, in1Minute);
+buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+
+// Plot consolidation zone boundaries
+Plot(IIf(NOT IsNull(czHigh1m), czHigh1m, Null), "CZ High", colorOrange, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(czLow1m), czLow1m, Null), "CZ Low", colorOrange, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(czMid1m), czMid1m, Null), "CZ Mid", colorGrey50, styleDots | styleNoRescale);
+
+// Shade consolidation zone
+PlotOHLC(czHigh1m, czHigh1m, czLow1m, czLow1m, "", ColorBlend(colorOrange, colorWhite, 0.85), styleCloud | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | A03 CZ Breakout | CZ(" + NumToStr(czTemaLength, 1.0) +
+        ") Flat<" + NumToStr(czFlatThreshold, 1.2) +
+        " Range<" + NumToStr(czMaxRangeTicks, 1.0) + "t" +
+        " Min=" + NumToStr(czMinConsolBars, 1.0) + "bars" +
+        " | Str=" + NumToStr(czStrength1m, 1.0) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

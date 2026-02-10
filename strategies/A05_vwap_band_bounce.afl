@@ -1,0 +1,132 @@
+// ===========================================
+// A05 - VWAP Band Bounce
+// ===========================================
+//
+// Mean-reversion strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Trades bounces off VWAP standard deviation bands.
+// When price touches or penetrates a VWAP band and then reverses back
+// through it, this signals a mean reversion opportunity back toward VWAP.
+//
+// The entry band is configurable (1-sigma, 2-sigma, or 3-sigma) to allow
+// optimization between frequency (1-sigma) and quality (3-sigma) of signals.
+//
+// Entry Long:  Previous Close was at or below the lower band AND current
+//              Close crosses back above it (bounce off support)
+// Entry Short: Previous Close was at or above the upper band AND current
+//              Close crosses back below it (rejection at resistance)
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+entryBand = Param("Entry Band Sigma", 1, 1, 3, 1);
+sdBars    = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult    = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- VWAP Clouds Indicator (from indicator library) ----
+vwStdev1 = 1.0;
+vwStdev2 = 2.0;
+vwStdev3 = 3.0;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Select entry band based on parameter ----
+entryUpper = IIf(entryBand == 1, r1, IIf(entryBand == 2, r2, r3));
+entryLower = IIf(entryBand == 1, s1, IIf(entryBand == 2, s2, s3));
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals ----
+// Long: price was at or below lower band, now crosses back above (bounce)
+buySignal   = Ref(Close, -1) <= entryLower AND Close > entryLower AND asianSession;
+
+// Short: price was at or above upper band, now crosses back below (rejection)
+shortSignal = Ref(Close, -1) >= entryUpper AND Close < entryUpper AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+exitDist1m   = exitDistance;
+vwap1m       = VWAP;
+entryUpper1m = entryUpper;
+entryLower1m = entryLower;
+r1_1m        = r1;
+s1_1m        = s1;
+r2_1m        = r2;
+s2_1m        = s2;
+r3_1m        = r3;
+s3_1m        = s3;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
+vwap1m       = TimeFrameExpand(vwap1m, in1Minute);
+entryUpper1m = TimeFrameExpand(entryUpper1m, in1Minute);
+entryLower1m = TimeFrameExpand(entryLower1m, in1Minute);
+r1_1m        = TimeFrameExpand(r1_1m, in1Minute);
+s1_1m        = TimeFrameExpand(s1_1m, in1Minute);
+r2_1m        = TimeFrameExpand(r2_1m, in1Minute);
+s2_1m        = TimeFrameExpand(s2_1m, in1Minute);
+r3_1m        = TimeFrameExpand(r3_1m, in1Minute);
+s3_1m        = TimeFrameExpand(s3_1m, in1Minute);
+buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(vwap1m, "VWAP", colorWhite, styleLine | styleThick);
+
+// Plot all VWAP bands
+Plot(r1_1m, "+1s", colorLightGrey, styleDashed | styleNoRescale);
+Plot(s1_1m, "-1s", colorLightGrey, styleDashed | styleNoRescale);
+Plot(r2_1m, "+2s", colorGrey50, styleDashed | styleNoRescale);
+Plot(s2_1m, "-2s", colorGrey50, styleDashed | styleNoRescale);
+Plot(r3_1m, "+3s", colorDarkGrey, styleDashed | styleNoRescale);
+Plot(s3_1m, "-3s", colorDarkGrey, styleDashed | styleNoRescale);
+
+// Highlight active entry bands
+Plot(entryUpper1m, "Entry Upper", colorYellow, styleLine | styleNoRescale);
+Plot(entryLower1m, "Entry Lower", colorYellow, styleLine | styleNoRescale);
+
+// Shade VWAP cloud between entry bands
+PlotOHLC(entryUpper1m, entryUpper1m, entryLower1m, entryLower1m, "", ColorBlend(colorYellow, colorWhite, 0.90), styleCloud | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | A05 VWAP Band Bounce | Band=" + NumToStr(entryBand, 1.0) + "s" +
+        " | VWAP=" + NumToStr(vwap1m, 1.2) +
+        " Upper=" + NumToStr(entryUpper1m, 1.2) +
+        " Lower=" + NumToStr(entryLower1m, 1.2) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

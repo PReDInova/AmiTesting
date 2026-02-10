@@ -1,0 +1,125 @@
+// ===========================================
+// A04 - Consolidation Zone Fade (False Breakout)
+// ===========================================
+//
+// False breakout / fade strategy for /GC Gold Futures during the Asian
+// session (6 PM - 3 AM EST). Trades false breakouts by detecting when
+// price breaks out of a consolidation zone but then crosses back inside.
+// This captures the common pattern of stop-hunting / failed breakouts
+// that occur frequently in the lower-volatility Asian session.
+//
+// Uses the persisted zone boundaries (lastCzHigh / lastCzLow) that
+// remain available after the consolidation zone ends.
+//
+// Entry Long:  Price was below lastCzLow on previous bar AND Close
+//              crosses back above lastCzLow (failed breakdown)
+// Entry Short: Price was above lastCzHigh on previous bar AND Close
+//              crosses back below lastCzHigh (failed breakout)
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+czTemaLength    = Param("CZ TEMA Length", 21, 5, 50, 1);
+czFlatThreshold = Param("CZ Flat Threshold", 0.50, 0.05, 2.0, 0.05);
+czMaxRangeTicks = Param("CZ Max Range (ticks)", 80, 20, 200, 5);
+czMinConsolBars = Param("CZ Min Consol Bars", 5, 1, 30, 1);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult          = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Consolidation Zone Indicator (from indicator library) ----
+// This provides: isConsolidating, czHigh, czLow, czMid,
+//                czBreakoutUp, czBreakoutDown, czStrength,
+//                lastCzHigh, lastCzLow (persisted after zone ends)
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- False Breakout Detection ----
+// Fade long: price was below the persisted zone low, then crosses back above
+// This means a breakdown failed and price is returning to the zone
+fadeLong = Ref(Close, -1) <= Ref(lastCzLow, -1)
+           AND Close > lastCzLow
+           AND NOT IsNull(lastCzLow);
+
+// Fade short: price was above the persisted zone high, then crosses back below
+// This means a breakout failed and price is returning to the zone
+fadeShort = Ref(Close, -1) >= Ref(lastCzHigh, -1)
+            AND Close < lastCzHigh
+            AND NOT IsNull(lastCzHigh);
+
+// ---- Entry Signals (filtered by session) ----
+buySignal   = fadeLong AND asianSession;
+shortSignal = fadeShort AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+exitDist1m     = exitDistance;
+lastCzHigh1m   = lastCzHigh;
+lastCzLow1m    = lastCzLow;
+czHigh1m       = czHigh;
+czLow1m        = czLow;
+isConsol1m     = isConsolidating;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
+lastCzHigh1m  = TimeFrameExpand(lastCzHigh1m, in1Minute);
+lastCzLow1m   = TimeFrameExpand(lastCzLow1m, in1Minute);
+czHigh1m      = TimeFrameExpand(czHigh1m, in1Minute);
+czLow1m       = TimeFrameExpand(czLow1m, in1Minute);
+isConsol1m    = TimeFrameExpand(isConsol1m, in1Minute);
+buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+
+// Plot persisted zone boundaries (after breakout)
+Plot(IIf(NOT IsNull(lastCzHigh1m), lastCzHigh1m, Null), "Last CZ High", colorYellow, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(lastCzLow1m), lastCzLow1m, Null), "Last CZ Low", colorYellow, styleDashed | styleNoRescale);
+
+// Plot active consolidation zone boundaries
+Plot(IIf(NOT IsNull(czHigh1m), czHigh1m, Null), "CZ High", colorOrange, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(czLow1m), czLow1m, Null), "CZ Low", colorOrange, styleDashed | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | A04 CZ Fade (False Breakout) | CZ(" + NumToStr(czTemaLength, 1.0) +
+        ") Flat<" + NumToStr(czFlatThreshold, 1.2) +
+        " Range<" + NumToStr(czMaxRangeTicks, 1.0) + "t" +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

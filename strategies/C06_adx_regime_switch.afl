@@ -1,0 +1,149 @@
+// ===========================================
+// C06 - ADX Regime Switch (Auto Trend/Range)
+// ===========================================
+//
+// Adaptive strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Automatically switches between trend-following
+// and mean-reversion modes based on ADX regime detection.
+//
+// ADX > trendThreshold: Trend mode - use CZ breakout logic
+// ADX < rangeThreshold: Range mode - use VWAP band bounce logic
+// ADX between thresholds: Dead zone - no trades
+//
+// Trend mode entries:  CZ breakout up/down signals
+// Range mode entries:  Price bouncing off VWAP 1-sigma bands
+//
+// Exit: StdDev-based stops with dynamic multiplier
+//       (wider for trend trades, tighter for range trades)
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+trendThreshold = Param("Trend ADX Threshold", 25, 18, 35, 1);
+rangeThreshold = Param("Range ADX Threshold", 20, 10, 25, 1);
+trendSdMult    = Param("Trend SD Mult", 1.5, 1.0, 3.0, 0.5);
+rangeSdMult    = Param("Range SD Mult", 0.75, 0.25, 1.5, 0.25);
+adxPer         = Param("ADX Period", 14, 5, 50, 1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Consolidation Zone Indicator (for trend mode breakouts) ----
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
+
+// ---- VWAP Clouds Indicator (for range mode band bounces) ----
+vwStdev1 = 1;
+vwStdev2 = 2;
+vwStdev3 = 3;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
+
+// ---- TEMA Indicator ----
+smoothingLength = 21;
+sourcePrice = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+
+// ---- StdDev Exit Indicator (base multiplier = 1.0, we apply dynamic mult ourselves) ----
+sdMultiplier = 1.0;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
+adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
+adxATR     = Wilders(adxTR, adxPer);
+adxPlusDM  = IIf(High - Ref(High, -1) > Ref(Low, -1) - Low AND High - Ref(High, -1) > 0, High - Ref(High, -1), 0);
+adxMinusDM = IIf(Ref(Low, -1) - Low > High - Ref(High, -1) AND Ref(Low, -1) - Low > 0, Ref(Low, -1) - Low, 0);
+plusDI      = 100 * Wilders(adxPlusDM, adxPer) / adxATR;
+minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
+DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
+ADXvalue    = Wilders(DX, adxPer);
+
+// ---- Regime Detection ----
+trendMode = ADXvalue > trendThreshold;
+rangeMode = ADXvalue < rangeThreshold;
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Trend Mode Entries (CZ breakout) ----
+buyTrend   = czBreakoutUp AND trendMode;
+shortTrend = czBreakoutDown AND trendMode;
+
+// ---- Range Mode Entries (VWAP band bounce) ----
+buyRange   = Ref(Close, -1) <= s1 AND Close > s1 AND rangeMode;
+shortRange = Ref(Close, -1) >= r1 AND Close < r1 AND rangeMode;
+
+// ---- Combined Entry Signals ----
+buySignal   = (buyTrend OR buyRange) AND asianSession;
+shortSignal = (shortTrend OR shortRange) AND asianSession;
+
+// ---- Dynamic Exit Distance ----
+// Wider stops for trend trades, tighter for range trades
+exitDist1m = IIf(trendMode, exitStdDev * trendSdMult, IIf(rangeMode, exitStdDev * rangeSdMult, exitStdDev));
+
+// ---- Save computed arrays before restoring timeframe ----
+adx1m          = ADXvalue;
+pdi1m          = plusDI;
+mdi1m          = minusDI;
+trendMode1m    = trendMode;
+rangeMode1m    = rangeMode;
+vwap1m         = VWAP;
+r1_1m          = r1;
+s1_1m          = s1;
+czHigh1m       = czHigh;
+czLow1m        = czLow;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+adx1m       = TimeFrameExpand(adx1m, in1Minute);
+pdi1m       = TimeFrameExpand(pdi1m, in1Minute);
+mdi1m       = TimeFrameExpand(mdi1m, in1Minute);
+trendMode1m = TimeFrameExpand(trendMode1m, in1Minute);
+rangeMode1m = TimeFrameExpand(rangeMode1m, in1Minute);
+vwap1m      = TimeFrameExpand(vwap1m, in1Minute);
+r1_1m       = TimeFrameExpand(r1_1m, in1Minute);
+s1_1m       = TimeFrameExpand(s1_1m, in1Minute);
+czHigh1m    = TimeFrameExpand(czHigh1m, in1Minute);
+czLow1m     = TimeFrameExpand(czLow1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target (dynamic distance) ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(vwap1m, "VWAP", colorYellow, styleLine | styleThick);
+Plot(r1_1m, "VWAP +1s", colorLightGrey, styleDashed | styleNoRescale);
+Plot(s1_1m, "VWAP -1s", colorLightGrey, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(czHigh1m), czHigh1m, Null), "CZ High", colorOrange, styleDashed | styleNoRescale);
+Plot(IIf(NOT IsNull(czLow1m), czLow1m, Null), "CZ Low", colorOrange, styleDashed | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | C06 ADX Regime Switch" +
+        " | ADX(" + NumToStr(adxPer, 1.0) + ")=" + NumToStr(adx1m, 1.1) +
+        " +DI=" + NumToStr(pdi1m, 1.1) + " -DI=" + NumToStr(mdi1m, 1.1) +
+        " | Mode=" + WriteIf(trendMode1m, "TREND", WriteIf(rangeMode1m, "RANGE", "DEAD")) +
+        " | TrendSD x" + NumToStr(trendSdMult, 1.1) +
+        " RangeSD x" + NumToStr(rangeSdMult, 1.2) +
+        " | Exit=" + NumToStr(exitDist1m, 1.4) + " pts";

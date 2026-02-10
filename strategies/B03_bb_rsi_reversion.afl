@@ -1,0 +1,104 @@
+// ===========================================
+// B03 - Bollinger Band + RSI Mean Reversion
+// ===========================================
+//
+// Mean reversion strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Fades moves to Bollinger Band extremes when RSI
+// confirms overextension. Enters long when price touches the lower band
+// with oversold RSI, and short when price touches the upper band with
+// overbought RSI.
+//
+// Entry Long:  Close <= Lower BB AND RSI < Oversold AND Asian session
+// Entry Short: Close >= Upper BB AND RSI > Overbought AND Asian session
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+bbPeriod  = Param("BB Period", 20, 10, 50, 1);
+bbStdDev  = Param("BB StdDev", 2.0, 1.0, 3.0, 0.1);
+rsiPeriod = Param("RSI Period", 14, 5, 30, 1);
+rsiOB     = Param("RSI Overbought", 70, 60, 85, 5);
+rsiOS     = Param("RSI Oversold", 30, 15, 40, 5);
+sdBars    = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult    = Param("StdDev Multiplier", 1.5, 0.5, 3.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Bollinger Bands (AmiBroker built-ins) ----
+upperBB  = BBandTop(Close, bbPeriod, bbStdDev);
+lowerBB  = BBandBot(Close, bbPeriod, bbStdDev);
+middleBB = MA(Close, bbPeriod);
+
+// ---- RSI (AmiBroker built-in) ----
+rsiVal = RSI(rsiPeriod);
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session, BB extremes, and RSI) ----
+buySignal   = Close <= lowerBB AND rsiVal < rsiOS AND asianSession;
+shortSignal = Close >= upperBB AND rsiVal > rsiOB AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+upperBB1m  = upperBB;
+lowerBB1m  = lowerBB;
+middleBB1m = middleBB;
+rsi1m      = rsiVal;
+exitDist1m = exitDistance;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+upperBB1m   = TimeFrameExpand(upperBB1m, in1Minute);
+lowerBB1m   = TimeFrameExpand(lowerBB1m, in1Minute);
+middleBB1m  = TimeFrameExpand(middleBB1m, in1Minute);
+rsi1m       = TimeFrameExpand(rsi1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(upperBB1m, "BB Upper(" + NumToStr(bbPeriod, 1.0) + "," + NumToStr(bbStdDev, 1.1) + ")", colorBlue, styleLine);
+Plot(lowerBB1m, "BB Lower", colorBlue, styleLine);
+Plot(middleBB1m, "BB Mid", colorBlue, styleDashed);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | B03 BB+RSI Reversion | BB(" + NumToStr(bbPeriod, 1.0) +
+        "," + NumToStr(bbStdDev, 1.1) + ") RSI(" + NumToStr(rsiPeriod, 1.0) +
+        ") OB=" + NumToStr(rsiOB, 1.0) + " OS=" + NumToStr(rsiOS, 1.0) +
+        " | RSI=" + NumToStr(rsi1m, 1.1) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

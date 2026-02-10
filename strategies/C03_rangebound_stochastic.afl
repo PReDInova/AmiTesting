@@ -1,0 +1,118 @@
+// ===========================================
+// C03 - Range-Bound Regime + Stochastic
+// ===========================================
+//
+// Range-bound mean reversion strategy for /GC Gold Futures during the
+// Asian session (6 PM - 3 AM EST). Uses the range-bound detector to
+// confirm the market is ranging, then times entries with Stochastic
+// oscillator crossovers in overbought/oversold zones near the range
+// boundaries.
+//
+// Entry Long:  isRangeBound AND Stoch %K crosses above %D AND %K < Oversold
+//              AND Close near range low boundary AND Asian session
+// Entry Short: isRangeBound AND Stoch %D crosses above %K AND %K > Overbought
+//              AND Close near range high boundary AND Asian session
+//
+// Exit: StdDev-based symmetric stop loss and profit target (tighter: 0.75x)
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+stochK          = Param("Stoch %K Period", 14, 5, 21, 1);
+stochD          = Param("Stoch %D Period", 3, 2, 7, 1);
+stochSmooth     = Param("Stoch Smoothing", 3, 1, 7, 1);
+stochOB         = Param("Stoch Overbought", 80, 70, 90, 5);
+stochOS         = Param("Stoch Oversold", 20, 10, 30, 5);
+nearBoundaryPct = Param("Near Boundary %", 25, 10, 50, 5);
+sdMult          = Param("StdDev Multiplier", 0.75, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Range-Bound Detection Indicator ----
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\range_bound.afl"
+
+// ---- Stochastic Oscillator (AmiBroker built-ins) ----
+sk = StochK(stochK, stochSmooth);
+sd = StochD(stochK, stochD, stochSmooth);
+
+// ---- StdDev Exit Indicator ----
+sdMultiplier = sdMult;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Near-boundary zones ----
+nearLow  = rangeLow + (rangeHigh - rangeLow) * nearBoundaryPct / 100;
+nearHigh = rangeHigh - (rangeHigh - rangeLow) * nearBoundaryPct / 100;
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals ----
+// Long:  range-bound + Stoch %K crosses above %D in oversold zone + price near range low
+// Short: range-bound + Stoch %D crosses above %K in overbought zone + price near range high
+buySignal   = isRangeBound AND Cross(sk, sd) AND sk < stochOS AND Close <= nearLow AND asianSession;
+shortSignal = isRangeBound AND Cross(sd, sk) AND sk > stochOB AND Close >= nearHigh AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+sk1m           = sk;
+sd1m           = sd;
+isRangeBound1m = isRangeBound;
+rangeHigh1m    = rangeHigh;
+rangeLow1m     = rangeLow;
+nearLow1m      = nearLow;
+nearHigh1m     = nearHigh;
+exitDist1m     = exitDistance;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+sk1m           = TimeFrameExpand(sk1m, in1Minute);
+sd1m           = TimeFrameExpand(sd1m, in1Minute);
+isRangeBound1m = TimeFrameExpand(isRangeBound1m, in1Minute);
+rangeHigh1m    = TimeFrameExpand(rangeHigh1m, in1Minute);
+rangeLow1m     = TimeFrameExpand(rangeLow1m, in1Minute);
+nearLow1m      = TimeFrameExpand(nearLow1m, in1Minute);
+nearHigh1m     = TimeFrameExpand(nearHigh1m, in1Minute);
+exitDist1m     = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal      = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal    = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(rangeHigh1m, "Range High", colorLightGrey, styleDashed | styleNoRescale);
+Plot(rangeLow1m, "Range Low", colorLightGrey, styleDashed | styleNoRescale);
+Plot(nearHigh1m, "Near High", colorOrange, styleDots | styleNoRescale);
+Plot(nearLow1m, "Near Low", colorOrange, styleDots | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | C03 RangeBound+Stoch | Stoch(" + NumToStr(stochK, 1.0) +
+        "," + NumToStr(stochD, 1.0) + "," + NumToStr(stochSmooth, 1.0) +
+        ") OB=" + NumToStr(stochOB, 1.0) + " OS=" + NumToStr(stochOS, 1.0) +
+        " | %K=" + NumToStr(sk1m, 1.1) + " %D=" + NumToStr(sd1m, 1.1) +
+        " | NearBdy " + NumToStr(nearBoundaryPct, 1.0) + "%" +
+        " | RangeBound=" + WriteIf(isRangeBound1m, "YES", "no") +
+        " | SD x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

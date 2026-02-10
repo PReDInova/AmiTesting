@@ -1,0 +1,110 @@
+// ===========================================
+// B04 - Stochastic Range Trading
+// ===========================================
+//
+// Range trading strategy for /GC Gold Futures during the Asian session
+// (6 PM - 3 AM EST). Uses Stochastic oscillator crossovers in
+// overbought/oversold zones to identify reversals within a ranging market.
+// ADX filter ensures the market is not trending (ADX below threshold).
+//
+// Entry Long:  %K crosses above %D AND %K < Oversold AND ADX < threshold AND Asian session
+// Entry Short: %D crosses above %K AND %K > Overbought AND ADX < threshold AND Asian session
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+
+// ---- Strategy Parameters ----
+stochK          = Param("Stoch %K Period", 14, 5, 21, 1);
+stochD          = Param("Stoch %D Period", 3, 2, 7, 1);
+stochSmooth     = Param("Stoch Smoothing", 3, 1, 7, 1);
+stochOB         = Param("Stoch Overbought", 80, 70, 90, 5);
+stochOS         = Param("Stoch Oversold", 20, 10, 30, 5);
+adxPer          = Param("ADX Period", 14, 5, 50, 1);
+adxMaxThreshold = Param("ADX Max Threshold", 25, 15, 35, 1);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult          = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;  // Asian session start (6 PM EST)
+
+// ---- Stochastic Oscillator (AmiBroker built-ins) ----
+sk = StochK(stochK, stochSmooth);
+sd = StochD(stochK, stochD, stochSmooth);
+
+// ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
+adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
+adxATR     = Wilders(adxTR, adxPer);
+adxPlusDM  = IIf(High - Ref(High, -1) > Ref(Low, -1) - Low AND High - Ref(High, -1) > 0, High - Ref(High, -1), 0);
+adxMinusDM = IIf(Ref(Low, -1) - Low > High - Ref(High, -1) AND Ref(Low, -1) - Low > 0, Ref(Low, -1) - Low, 0);
+plusDI      = 100 * Wilders(adxPlusDM, adxPer) / adxATR;
+minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
+DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
+ADXvalue    = Wilders(DX, adxPer);
+
+// ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Entry Signals (filtered by session, Stochastic zones, and ADX range) ----
+rangeConfirmed = ADXvalue < adxMaxThreshold;
+
+buySignal   = Cross(sk, sd) AND sk < stochOS AND rangeConfirmed AND asianSession;
+shortSignal = Cross(sd, sk) AND sk > stochOB AND rangeConfirmed AND asianSession;
+
+// ---- Save computed arrays before restoring timeframe ----
+sk1m       = sk;
+sd1m       = sd;
+adx1m      = ADXvalue;
+exitDist1m = exitDistance;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+sk1m        = TimeFrameExpand(sk1m, in1Minute);
+sd1m        = TimeFrameExpand(sd1m, in1Minute);
+adx1m       = TimeFrameExpand(adx1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | B04 Stochastic Range | Stoch(" + NumToStr(stochK, 1.0) +
+        "," + NumToStr(stochD, 1.0) + "," + NumToStr(stochSmooth, 1.0) +
+        ") OB=" + NumToStr(stochOB, 1.0) + " OS=" + NumToStr(stochOS, 1.0) +
+        " | ADX(" + NumToStr(adxPer, 1.0) + ")<" + NumToStr(adxMaxThreshold, 1.0) +
+        " ADX=" + NumToStr(adx1m, 1.1) +
+        " | %K=" + NumToStr(sk1m, 1.1) + " %D=" + NumToStr(sd1m, 1.1) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

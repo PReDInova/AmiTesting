@@ -1,0 +1,94 @@
+// ===========================================
+// A06 - VWAP + TEMA Confluence Strategy
+// ===========================================
+//
+// Confluence strategy: only enter when VWAP position and TEMA direction
+// agree on a contrarian mean-reversion signal.
+//
+// Entry Long:  Close > VWAP AND TEMA crosses above Close (price dipped
+//              below TEMA while still above VWAP -> buy the dip)
+// Entry Short: Close < VWAP AND Close crosses above TEMA (price popped
+//              above TEMA while still below VWAP -> sell the pop)
+//
+// Exit: StdDev-based stop loss and profit target
+//
+// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+
+// ---- Strategy Parameters ----
+temaLength = Param("TEMA Length", 21, 5, 100, 1);
+sdMult     = Param("SD Multiplier", 1.0, 0.1, 5.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;
+
+// ---- VWAP Clouds Indicator ----
+vwStdev1 = 1;
+vwStdev2 = 2;
+vwStdev3 = 3;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
+
+// ---- TEMA Indicator ----
+smoothingLength = temaLength;
+sourcePrice = Close;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+
+// ---- StdDev Exit Indicator ----
+sdMultiplier = sdMult;
+#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+
+// ---- Save computed arrays before restoring timeframe ----
+tema1m     = temas;
+vwap1m     = VWAP;
+exitDist1m = exitDistance;
+
+// ---- Asian Session Filter ----
+tn = TimeNum();
+asianSession = (tn >= 180000) OR (tn <= 030000);
+
+// ---- Confluence Entry Signals ----
+// Long:  price above VWAP (bullish context) + TEMA crosses above Close (contrarian dip buy)
+// Short: price below VWAP (bearish context) + Close crosses above TEMA (contrarian pop sell)
+buySignal   = asianSession AND Close > vwap1m AND Cross(tema1m, Close);
+shortSignal = asianSession AND Close < vwap1m AND Cross(Close, tema1m);
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+tema1m      = TimeFrameExpand(tema1m, in1Minute);
+vwap1m      = TimeFrameExpand(vwap1m, in1Minute);
+exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Entry signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine | styleThick);
+Plot(vwap1m, "VWAP", colorYellow, styleLine | styleThick);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | A06 VWAP+TEMA Confluence | TEMA(" + NumToStr(temaLength, 1.0) +
+        ") | SD x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
+        " | Asian Session";

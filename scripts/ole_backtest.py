@@ -6,6 +6,7 @@ loads a database, runs a backtest via an .apx project file, and exports
 the results to HTML and CSV.
 """
 
+import json
 import logging
 import subprocess
 import sys
@@ -138,7 +139,7 @@ class OLEBacktester:
     # Backtest execution
     # ------------------------------------------------------------------
 
-    def run_backtest(self, apx_path: str = None, output_dir: str = None) -> bool:
+    def run_backtest(self, apx_path: str = None, output_dir: str = None, run_mode: int = None) -> bool:
         """Open an .apx project, run the backtest, export results.
 
         Parameters
@@ -156,7 +157,7 @@ class OLEBacktester:
         target_apx = apx_path or str(APX_OUTPUT)
         poll_interval = BACKTEST_SETTINGS["poll_interval"]
         max_wait = BACKTEST_SETTINGS["max_wait"]
-        run_mode = BACKTEST_SETTINGS["run_mode"]
+        run_mode = run_mode if run_mode is not None else BACKTEST_SETTINGS["run_mode"]
 
         # Determine output paths
         if output_dir:
@@ -167,6 +168,18 @@ class OLEBacktester:
 
         html_path = str(out / "results.html")
         csv_path = str(out / "results.csv")
+
+        # --- Load optimization config if present ---
+        opt_config = None
+        opt_config_path = out / "opt_config.json"
+        if opt_config_path.exists():
+            try:
+                opt_config = json.loads(opt_config_path.read_text(encoding="utf-8"))
+                logger.info(
+                    "Loaded opt_config: %d total combos", opt_config.get("total_combos", 0)
+                )
+            except Exception as exc:
+                logger.warning("Could not load opt_config.json: %s", exc)
 
         analysis_doc = None
         try:
@@ -184,6 +197,7 @@ class OLEBacktester:
 
             # --- Poll until finished or timed out ---
             elapsed = 0.0
+            start_time = time.monotonic()
             while analysis_doc.IsBusy:
                 if elapsed >= max_wait:
                     logger.error(
@@ -192,13 +206,34 @@ class OLEBacktester:
                         max_wait,
                     )
                     return False
+
+                # -- Optimization progress tracking --
+                if opt_config:
+                    self._update_opt_progress(opt_config, start_time)
+
+                    # Check for abort request
+                    abort_path = out / "abort_requested"
+                    if abort_path.exists():
+                        logger.warning("Abort requested — calling analysis_doc.Abort()")
+                        try:
+                            analysis_doc.Abort()
+                        except Exception as abort_exc:
+                            logger.warning("Abort() call failed: %s", abort_exc)
+                        # Wait a moment for AmiBroker to finish aborting
+                        time.sleep(2)
+                        return False
+
                 logger.info(
                     "Waiting for backtest to complete... (%.1fs elapsed)", elapsed
                 )
                 time.sleep(poll_interval)
-                elapsed += poll_interval
+                elapsed = time.monotonic() - start_time
 
             logger.info("Backtest completed in %.1f seconds.", elapsed)
+
+            # Write final progress update
+            if opt_config:
+                self._update_opt_progress(opt_config, start_time)
 
             # --- Export results ---
             logger.info("Exporting HTML results to: %s", html_path)
@@ -235,6 +270,47 @@ class OLEBacktester:
                     )
 
     # ------------------------------------------------------------------
+    # Optimization progress helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _update_opt_progress(opt_config: dict, start_time: float) -> None:
+        """Read the AFL-written combo counter and write opt_status.json."""
+        progress_file = opt_config.get("progress_file", "")
+        status_file = opt_config.get("status_file", "")
+        total = opt_config.get("total_combos", 0)
+
+        combo = 0
+        if progress_file:
+            try:
+                raw = Path(progress_file).read_text(encoding="utf-8").strip()
+                combo = int(float(raw))
+            except (OSError, ValueError):
+                pass  # file not yet created or mid-write
+
+        elapsed = time.monotonic() - start_time
+        rate = combo / elapsed if elapsed > 0 else 0
+        pct = (combo / total * 100) if total > 0 else 0
+        eta_seconds = ((total - combo) / rate) if rate > 0 else 0
+
+        status = {
+            "combo": combo,
+            "total": total,
+            "elapsed": round(elapsed, 1),
+            "pct": round(pct, 1),
+            "eta_seconds": round(eta_seconds, 1),
+            "rate": round(rate, 2),
+        }
+
+        if status_file:
+            try:
+                Path(status_file).write_text(
+                    json.dumps(status), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+    # ------------------------------------------------------------------
     # Disconnect
     # ------------------------------------------------------------------
 
@@ -253,7 +329,7 @@ class OLEBacktester:
     # Full orchestration
     # ------------------------------------------------------------------
 
-    def run_full_test(self, db_path: str = None, apx_path: str = None, output_dir: str = None) -> bool:
+    def run_full_test(self, db_path: str = None, apx_path: str = None, output_dir: str = None, run_mode: int = None) -> bool:
         """Orchestrate the complete workflow: connect, load, validate, backtest, disconnect.
 
         Parameters
@@ -270,14 +346,10 @@ class OLEBacktester:
             if not self.load_database(db_path):
                 return False
 
-            # Validate APX before running the backtest
-            valid, reason = self.validate_apx(apx_path)
-            if not valid:
-                logger.error("APX validation failed — aborting backtest. Reason: %s", reason)
-                return False
-            logger.info("APX validated, proceeding to backtest.")
-
-            if not self.run_backtest(apx_path, output_dir=output_dir):
+            # Skip separate validate_apx() — opening the APX twice (validate
+            # then backtest) causes Run() to block on the second open.
+            # run_backtest() handles None/open failures internally.
+            if not self.run_backtest(apx_path, output_dir=output_dir, run_mode=run_mode):
                 return False
 
             return True

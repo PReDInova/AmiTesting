@@ -13,26 +13,102 @@
 
 <!-- ── Header ──────────────────────────────────────────── -->
 <div class="mb-4">
-    <h2 class="fw-bold mb-1">Backtest Execution</h2>
+    <h2 class="fw-bold mb-1">
+        {% if is_optimization %}Optimization{% else %}Backtest{% endif %} Execution
+    </h2>
 </div>
 
 <!-- ── Status Card ─────────────────────────────────────── -->
 {% if state.running %}
 <!-- Running -->
-<div class="card mb-4 border-0" style="border-left: 4px solid #0d6efd !important;">
-    <div class="card-body d-flex align-items-center gap-3">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Running...</span>
-        </div>
-        <div>
-            <h5 class="fw-bold mb-1 text-primary">Backtest is running...</h5>
-            {% if state.started_at %}
+<div id="statusCard" class="card mb-4 border-0" style="border-left: 4px solid #0d6efd !important;">
+    <div class="card-body">
+        {% if is_optimization and state.run_id %}
+        <!-- ── Optimization Progress ─────────────────── -->
+        <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="spinner-border text-primary" role="status" id="spinnerIcon">
+                <span class="visually-hidden">Running...</span>
+            </div>
+            <div>
+                <h5 class="fw-bold mb-1 text-primary" id="statusTitle">Optimization is running...</h5>
+                {% if state.started_at %}
                 <p class="text-muted mb-0">
                     Started at <strong>{{ state.started_at }}</strong>
                 </p>
-            {% endif %}
-            <small class="text-muted">This page will refresh automatically.</small>
+                {% endif %}
+            </div>
         </div>
+
+        <!-- Progress bar -->
+        <div class="progress mb-3" style="height: 24px;">
+            <div id="optProgressBar"
+                 class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                 role="progressbar"
+                 style="width: 0%"
+                 aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                <span id="optProgressText">Waiting...</span>
+            </div>
+        </div>
+
+        <!-- Metric cards -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body py-2">
+                        <small class="text-muted d-block">Combos Tested</small>
+                        <span class="fs-5 fw-bold" id="optCombo">0</span>
+                        <small class="text-muted"> / <span id="optTotal">0</span></small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body py-2">
+                        <small class="text-muted d-block">Combos/sec</small>
+                        <span class="fs-5 fw-bold" id="optRate">--</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body py-2">
+                        <small class="text-muted d-block">Elapsed</small>
+                        <span class="fs-5 fw-bold" id="optElapsed">--</span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card text-center h-100">
+                    <div class="card-body py-2">
+                        <small class="text-muted d-block">Est. Remaining</small>
+                        <span class="fs-5 fw-bold" id="optEta">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Abort button -->
+        <button id="abortBtn" class="btn btn-outline-danger btn-sm" onclick="abortRun()">
+            <i class="bi bi-stop-circle me-1"></i>Abort Optimization
+        </button>
+
+        {% else %}
+        <!-- ── Simple spinner for non-optimization runs ── -->
+        <div class="d-flex align-items-center gap-3">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Running...</span>
+            </div>
+            <div>
+                <h5 class="fw-bold mb-1 text-primary">Backtest is running...</h5>
+                {% if state.started_at %}
+                    <p class="text-muted mb-0">
+                        Started at <strong>{{ state.started_at }}</strong>
+                    </p>
+                {% endif %}
+                <small class="text-muted">This page will refresh automatically.</small>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -41,13 +117,21 @@
 <div class="callout-green mb-4 d-flex align-items-start gap-3">
     <i class="bi bi-check-circle-fill text-success fs-3"></i>
     <div>
-        <h5 class="fw-bold mb-1 text-success">Backtest completed successfully</h5>
+        <h5 class="fw-bold mb-1 text-success">
+            {% if is_optimization %}Optimization{% else %}Backtest{% endif %} completed successfully
+        </h5>
         {% if state.finished_at %}
             <p class="text-muted mb-1">Finished at <strong>{{ state.finished_at }}</strong></p>
         {% endif %}
+        {% if state.run_id %}
+        <a href="/run/{{ state.run_id }}" class="btn btn-success btn-sm mt-1">
+            <i class="bi bi-eye me-1"></i>View Results
+        </a>
+        {% else %}
         <a href="/" class="btn btn-success btn-sm mt-1">
             <i class="bi bi-eye me-1"></i>View Results
         </a>
+        {% endif %}
     </div>
 </div>
 
@@ -56,7 +140,9 @@
 <div class="callout-red mb-4 d-flex align-items-start gap-3">
     <i class="bi bi-x-circle-fill text-danger fs-3"></i>
     <div>
-        <h5 class="fw-bold mb-1 text-danger">Backtest failed</h5>
+        <h5 class="fw-bold mb-1 text-danger">
+            {% if is_optimization %}Optimization{% else %}Backtest{% endif %} failed
+        </h5>
         {% if state.error %}
             <p class="mb-1"><strong>Error:</strong> {{ state.error }}</p>
         {% endif %}
@@ -113,12 +199,99 @@ document.addEventListener('DOMContentLoaded', function() {
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // Auto-refresh while backtest is running
-    {% if state.running %}
+    {% if state.running and is_optimization and state.run_id %}
+    // ── AJAX polling for optimization progress ──
+    var runId = "{{ state.run_id }}";
+    var pollTimer = null;
+
+    function formatTime(seconds) {
+        if (!seconds || seconds <= 0) return "--";
+        if (seconds < 60) return Math.round(seconds) + "s";
+        if (seconds < 3600) return Math.floor(seconds / 60) + "m " + Math.round(seconds % 60) + "s";
+        return Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m";
+    }
+
+    function pollProgress() {
+        fetch("/api/run/" + runId + "/opt-progress")
+            .then(function(resp) { return resp.json(); })
+            .then(function(data) {
+                // Update progress bar
+                var pct = data.pct || 0;
+                var bar = document.getElementById('optProgressBar');
+                var text = document.getElementById('optProgressText');
+                if (bar) {
+                    bar.style.width = pct + '%';
+                    bar.setAttribute('aria-valuenow', pct);
+                }
+                if (text) {
+                    text.textContent = (data.combo > 0) ? (Math.round(pct) + '%') : 'Waiting...';
+                }
+
+                // Update metric cards
+                var comboEl = document.getElementById('optCombo');
+                var totalEl = document.getElementById('optTotal');
+                var rateEl = document.getElementById('optRate');
+                var elapsedEl = document.getElementById('optElapsed');
+                var etaEl = document.getElementById('optEta');
+
+                if (comboEl) comboEl.textContent = (data.combo || 0).toLocaleString();
+                if (totalEl) totalEl.textContent = (data.total || 0).toLocaleString();
+                if (rateEl) rateEl.textContent = data.rate ? data.rate.toFixed(1) : '--';
+                if (elapsedEl) elapsedEl.textContent = formatTime(data.elapsed);
+                if (etaEl) etaEl.textContent = formatTime(data.eta_seconds);
+
+                // Check if run completed or failed
+                if (data.run_status === 'completed') {
+                    clearInterval(pollTimer);
+                    // Auto-redirect to results page
+                    window.location.href = "/run/" + runId;
+                } else if (data.run_status === 'failed') {
+                    clearInterval(pollTimer);
+                    window.location.reload();
+                }
+            })
+            .catch(function(err) {
+                console.warn("Progress poll error:", err);
+            });
+    }
+
+    // Poll every 2 seconds
+    pollProgress();
+    pollTimer = setInterval(pollProgress, 2000);
+
+    {% elif state.running %}
+    // ── Simple page reload for non-optimization runs ──
     setTimeout(function() {
         window.location.reload();
     }, 3000);
     {% endif %}
 });
+
+function abortRun() {
+    var runId = "{{ state.run_id or '' }}";
+    if (!runId) return;
+
+    var btn = document.getElementById('abortBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Aborting...';
+    }
+
+    fetch("/api/run/" + runId + "/abort", { method: "POST" })
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+            if (data.status === 'abort_requested') {
+                var title = document.getElementById('statusTitle');
+                if (title) title.textContent = 'Abort requested — waiting for AmiBroker...';
+            }
+        })
+        .catch(function(err) {
+            console.warn("Abort request failed:", err);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-stop-circle me-1"></i>Abort Optimization';
+            }
+        });
+}
 </script>
 {% endblock %}

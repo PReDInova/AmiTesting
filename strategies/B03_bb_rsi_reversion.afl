@@ -23,6 +23,7 @@ rsiOB     = Param("RSI Overbought", 70, 60, 85, 5);
 rsiOS     = Param("RSI Oversold", 30, 15, 40, 5);
 sdBars    = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult    = Param("StdDev Multiplier", 1.5, 0.5, 3.0, 0.1);
+profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -78,7 +79,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);

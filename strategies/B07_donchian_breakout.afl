@@ -21,6 +21,8 @@ adxPer        = Param("ADX Period", 14, 5, 50, 1);
 adxThreshold  = Param("ADX Threshold", 20, 10, 35, 1);
 sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult        = Param("StdDev Multiplier", 1.5, 0.5, 3.0, 0.1);
+atrPer        = Param("ATR Period", 14, 5, 50, 1);
+profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -33,7 +35,7 @@ dcHigh = HHV(High, dcPeriod);
 dcLow  = LLV(Low, dcPeriod);
 
 // ---- ATR Buffer (AmiBroker built-in) ----
-atrVal      = ATR(14);
+atrVal      = ATR(atrPer);
 entryBuffer = atrVal * atrBufferMult;
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
@@ -86,7 +88,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);

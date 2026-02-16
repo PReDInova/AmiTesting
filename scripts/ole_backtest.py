@@ -10,10 +10,14 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
+import pythoncom
 import win32com.client
+
+from scripts.dialog_handler import DialogHandler
 
 # ---------------------------------------------------------------------------
 # Import project-wide configuration from the parent config package
@@ -22,6 +26,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import *  # noqa: E402, F403
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Standalone helpers
+# ---------------------------------------------------------------------------
+
+def list_symbols(db_path: str = None) -> list:
+    """Enumerate all symbols in an AmiBroker database via COM automation.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Full path to the database directory.  Falls back to
+        ``AMIBROKER_DB_PATH`` from settings if not provided.
+
+    Returns
+    -------
+    list[str]
+        Sorted list of ticker symbols.  Returns an empty list when
+        AmiBroker is not available or any COM error occurs.
+    """
+    symbols = []
+    try:
+        pythoncom.CoInitialize()
+        ab = win32com.client.Dispatch(AMIBROKER_EXE)
+        ab.LoadDatabase(db_path or AMIBROKER_DB_PATH)
+        for i in range(ab.Stocks.Count):
+            symbols.append(ab.Stocks(i).Ticker)
+    except Exception as exc:
+        logger.error("list_symbols failed: %s", exc)
+        return []
+    finally:
+        pythoncom.CoUninitialize()
+    return sorted(symbols)
 
 
 class OLEBacktester:
@@ -182,7 +220,13 @@ class OLEBacktester:
                 logger.warning("Could not load opt_config.json: %s", exc)
 
         analysis_doc = None
+        dialog_handler = DialogHandler()
         try:
+            # Start monitoring for blocking dialogs BEFORE opening the APX.
+            # AmiBroker may show modal dialogs (e.g. "formula is different")
+            # that block the COM call; the handler dismisses them automatically.
+            dialog_handler.start()
+
             # --- Open the analysis project ---
             logger.info("Opening analysis project: %s", target_apx)
             analysis_doc = self.ab.AnalysisDocs.Open(target_apx)
@@ -236,11 +280,17 @@ class OLEBacktester:
                 self._update_opt_progress(opt_config, start_time)
 
             # --- Export results ---
-            logger.info("Exporting HTML results to: %s", html_path)
-            analysis_doc.Export(html_path)
-
-            logger.info("Exporting CSV results to: %s", csv_path)
-            analysis_doc.Export(csv_path)
+            # Export directly in the main thread.  COM objects cannot be
+            # used across threads without marshaling, which causes
+            # "<unknown>.Export" errors.  The dialog handler is already
+            # running to dismiss blocking dialogs, and the parent process
+            # has a timeout as a safety net against hangs.
+            for label, fpath in [("HTML", html_path), ("CSV", csv_path)]:
+                logger.info("Exporting %s results to: %s", label, fpath)
+                try:
+                    analysis_doc.Export(fpath)
+                except Exception as exc:
+                    logger.error("%s export failed: %s", label, exc)
 
             # Log file sizes if the exports landed on disk
             for label, fpath_str in [("HTML", html_path), ("CSV", csv_path)]:
@@ -260,6 +310,7 @@ class OLEBacktester:
             return False
 
         finally:
+            dialog_handler.stop()
             if analysis_doc is not None:
                 try:
                     analysis_doc.Close()

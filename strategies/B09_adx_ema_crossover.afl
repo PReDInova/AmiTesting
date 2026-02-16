@@ -22,7 +22,11 @@ emaSlow      = Param("EMA Slow", 50, 20, 100, 5);
 adxPer       = Param("ADX Period", 14, 5, 50, 1);
 adxThreshold = Param("ADX Threshold", 25, 15, 40, 1);
 rsiPeriod    = Param("RSI Period", 14, 7, 21, 7);
+rsiOB        = Param("RSI Overbought", 70, 60, 85, 5);
+rsiOS        = Param("RSI Oversold", 30, 15, 40, 5);
+sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult       = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+profitMult   = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -31,7 +35,9 @@ TimeFrameSet(in1Minute);
 sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- StdDev Exit Indicator (from indicator library) ----
+sdLookback   = sdBars;
 sdMultiplier = sdMult;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- EMA Calculations (AmiBroker built-ins) ----
@@ -58,8 +64,8 @@ asianSession = (tn >= 180000) OR (tn <= 030000);
 // ---- Entry Signals (filtered by session, ADX trend, and RSI) ----
 trendActive = ADXvalue > adxThreshold;
 
-buySignal   = Cross(fastEMA, slowEMA) AND trendActive AND rsiVal < 70 AND asianSession;
-shortSignal = Cross(slowEMA, fastEMA) AND trendActive AND rsiVal > 30 AND asianSession;
+buySignal   = Cross(fastEMA, slowEMA) AND trendActive AND rsiVal < rsiOB AND asianSession;
+shortSignal = Cross(slowEMA, fastEMA) AND trendActive AND rsiVal > rsiOS AND asianSession;
 
 // ---- Save computed arrays before restoring timeframe ----
 fastEMA1m  = fastEMA;
@@ -87,7 +93,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);

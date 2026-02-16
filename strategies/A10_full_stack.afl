@@ -18,7 +18,9 @@ czTemaLength  = Param("CZ TEMA Length", 21, 5, 50, 1);
 trendTemaLen  = Param("Trend TEMA Length", 34, 5, 100, 1);
 adxPer        = Param("ADX Period", 14, 5, 50, 1);
 adxThreshold  = Param("ADX Threshold", 20, 10, 40, 1);
+sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult        = Param("SD Multiplier", 2.0, 0.1, 5.0, 0.1);
+profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -37,7 +39,9 @@ sourcePrice = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
 // ---- StdDev Exit Indicator ----
+sdLookback   = sdBars;
 sdMultiplier = sdMult;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- ADX Inline Calculation ----
@@ -91,7 +95,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -102,7 +106,7 @@ Short = ExRem(Short, Buy);
 
 // ---- Visualization ----
 Plot(Close, "Price", colorDefault, styleCandle);
-Plot(tema1m, "Trend TEMA(" + NumToStr(trendTemaLen, 1.0) + ")", colorCyan, styleLine | styleThick);
+Plot(tema1m, "Trend TEMA(" + NumToStr(trendTemaLen, 1.0) + ")", colorAqua, styleLine | styleThick);
 
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
@@ -112,6 +116,7 @@ Title = Name() + " | A10 Full Stack CZ+ADX+TEMA" +
         " | Trend-TEMA(" + NumToStr(trendTemaLen, 1.0) + ")" +
         " | ADX(" + NumToStr(adxPer, 1.0) + ")=" + NumToStr(adxVal1m, 1.2) +
         " | Thresh=" + NumToStr(adxThreshold, 1.0) +
-        " | SD x" + NumToStr(sdMult, 1.1) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts" +
         " | Asian Session";

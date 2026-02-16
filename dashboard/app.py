@@ -121,6 +121,7 @@ from scripts.strategy_db import (
     get_indicator_tooltip as db_get_indicator_tooltip,
     upsert_indicator_tooltip as db_upsert_indicator_tooltip,
     delete_indicator_tooltip as db_delete_indicator_tooltip,
+    reconstruct_optimization_parsed,
 )
 
 init_db()
@@ -707,7 +708,7 @@ def load_afl_version(version_name: str) -> tuple:
         return (False, str(exc))
 
 
-def _run_backtest_background(strategy_id: str = None, version_id: str = None, run_mode: int = None):
+def _run_backtest_background(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None):
     """Run the backtest in a background thread via run.py.
 
     Uses ``Popen`` instead of ``subprocess.run`` so that the run_id can be
@@ -734,19 +735,27 @@ def _run_backtest_background(strategy_id: str = None, version_id: str = None, ru
             pass
 
     proc = None
+    # Redirect subprocess stdout/stderr to a file instead of PIPE.
+    # Using PIPE without draining causes a deadlock when the OS pipe
+    # buffer fills up (~4-8 KB on Windows), blocking the subprocess.
+    proc_log_path = LOGS_DIR / "run_subprocess.log"
+    proc_log_file = None
     try:
         cmd = [sys.executable, str(PROJECT_ROOT / "run.py")]
         if strategy_id:
-            cmd.append(strategy_id)
+            cmd.extend(["--strategy-id", strategy_id])
         if version_id:
-            cmd.append(version_id)
+            cmd.extend(["--version-id", version_id])
         if run_mode is not None:
-            cmd.append(str(run_mode))
+            cmd.extend(["--run-mode", str(run_mode)])
+        if symbol:
+            cmd.extend(["--symbol", symbol])
 
+        proc_log_file = open(proc_log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=proc_log_file,
+            stderr=proc_log_file,
             text=True,
             cwd=str(PROJECT_ROOT),
         )
@@ -770,13 +779,33 @@ def _run_backtest_background(strategy_id: str = None, version_id: str = None, ru
                 with _backtest_lock:
                     _backtest_state["success"] = False
                     _backtest_state["error"] = "Backtest timed out after 10 minutes"
+                    # Mark the DB run as failed so the UI doesn't get stuck
+                    rid = _backtest_state.get("run_id")
+                if rid:
+                    try:
+                        db_update_run(
+                            rid,
+                            status="failed",
+                            metrics_json=json.dumps({"error": "Subprocess timed out after 10 minutes"}),
+                            completed_at=datetime.now(timezone.utc).isoformat(),
+                        )
+                        logger.warning("Marked run %s as failed (timeout)", rid)
+                    except Exception:
+                        logger.exception("Failed to mark timed-out run as failed in DB")
                 return
 
             time.sleep(1)
 
-        # Process has finished — collect output
-        stdout, stderr = proc.communicate(timeout=10)
+        # Process has finished
         returncode = proc.returncode
+
+        # Read subprocess output from log file for error reporting
+        proc_log_file.close()
+        proc_log_file = None
+        try:
+            proc_output = proc_log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            proc_output = ""
 
         with _backtest_lock:
             _backtest_state["success"] = returncode == 0
@@ -790,22 +819,45 @@ def _run_backtest_background(strategy_id: str = None, version_id: str = None, ru
                     except OSError:
                         pass
                 if _backtest_state["run_id"] is None:
-                    match = re.search(r"Run ID:\s+([0-9a-f-]{36})", stderr or "")
-                    if not match:
-                        match = re.search(r"Run ID:\s+([0-9a-f-]{36})", stdout or "")
+                    match = re.search(r"Run ID:\s+([0-9a-f-]{36})", proc_output)
                     if match:
                         _backtest_state["run_id"] = match.group(1)
             else:
-                _backtest_state["error"] = stderr[-500:] if stderr else "Unknown error"
+                _backtest_state["error"] = proc_output[-500:] if proc_output else "Unknown error"
 
     except Exception as e:
         with _backtest_lock:
             _backtest_state["success"] = False
             _backtest_state["error"] = str(e)
     finally:
+        if proc_log_file is not None:
+            try:
+                proc_log_file.close()
+            except Exception:
+                pass
         with _backtest_lock:
             _backtest_state["running"] = False
             _backtest_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+            rid = _backtest_state.get("run_id")
+            success = _backtest_state.get("success")
+
+        # Safety net: if the subprocess failed/crashed but run.py didn't get a
+        # chance to update the DB, the run record would be stuck as "running"
+        # forever.  Mark it as failed so the UI correctly shows the outcome.
+        if rid and not success:
+            try:
+                run_record = db_get_run(rid)
+                if run_record and run_record.get("status") == "running":
+                    error_msg = _backtest_state.get("error") or "Subprocess exited unexpectedly"
+                    db_update_run(
+                        rid,
+                        status="failed",
+                        metrics_json=json.dumps({"error": error_msg}),
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    logger.warning("Safety net: marked run %s as failed in DB", rid)
+            except Exception:
+                logger.exception("Failed to update DB status for crashed run")
 
 
 def _run_batch_background(batch_id: str):
@@ -955,27 +1007,45 @@ def run_detail(run_id: str):
     if not filepath.exists() and not run["results_dir"]:
         filepath = RESULTS_DIR / csv_filename
 
+    # Try SQL-first for optimization runs (survives CSV deletion)
+    sql_parsed = None
+    if run.get("is_optimization") and run.get("total_combos", 0) > 0:
+        try:
+            sql_parsed = reconstruct_optimization_parsed(run_id)
+        except Exception as exc:
+            logger.warning("SQL optimization reconstruction failed: %s", exc)
+
     if not filepath.exists():
-        # Check if the run failed with stored error messages
-        run_metrics = run.get("metrics") or {}
-        error_msg = run_metrics.get("error")
-        validation_errors = run_metrics.get("validation_errors", [])
-        if error_msg:
-            full_error = error_msg
-            if validation_errors:
-                full_error += "\n" + "\n".join(f"  - {e}" for e in validation_errors)
-        elif run.get("status") == "failed":
-            full_error = "Run failed — no results were produced."
+        if sql_parsed:
+            # CSV is gone but we have SQL data — use it
+            parsed = sql_parsed
+            status = run.get("status", "completed")
+            has_html = False
         else:
-            full_error = f"Result file not found: {filepath}"
-        parsed = {"trades": [], "metrics": {}, "columns": [], "error": full_error, "is_optimization": False}
-        status = run.get("status", "pending")
-        has_html = False
+            # Check if the run failed with stored error messages
+            run_metrics = run.get("metrics") or {}
+            error_msg = run_metrics.get("error")
+            validation_errors = run_metrics.get("validation_errors", [])
+            if error_msg:
+                full_error = error_msg
+                if validation_errors:
+                    full_error += "\n" + "\n".join(f"  - {e}" for e in validation_errors)
+            elif run.get("status") == "failed":
+                full_error = "Run failed — no results were produced."
+            else:
+                full_error = f"Result file not found: {filepath}"
+            parsed = {"trades": [], "metrics": {}, "columns": [], "error": full_error, "is_optimization": False}
+            status = run.get("status", "pending")
+            has_html = False
     else:
-        # Detect if this was an optimization run via stored params
-        run_params = run.get("params") or {}
-        force_opt = (run_params.get("run_mode") == 4) or (run.get("metrics", {}).get("run_mode") == 4)
-        parsed = parse_results_csv(filepath, force_optimization=force_opt)
+        if sql_parsed:
+            # Prefer SQL data even when CSV exists (consistent source)
+            parsed = sql_parsed
+        else:
+            # Detect if this was an optimization run via stored params
+            run_params = run.get("params") or {}
+            force_opt = (run_params.get("run_mode") == 4) or (run.get("metrics", {}).get("run_mode") == 4)
+            parsed = parse_results_csv(filepath, force_optimization=force_opt)
         status = get_status(filepath)
         html_companion = filepath.with_suffix(".html")
         has_html = html_companion.exists()
@@ -997,6 +1067,7 @@ def run_detail(run_id: str):
         db_configured=bool(AMIBROKER_DB_PATH),
         run=run,
         is_optimization=is_optimization,
+        default_symbol=GCZ25_SYMBOL,
     )
 
 
@@ -1039,6 +1110,7 @@ def strategy_detail(strategy_id: str):
         runs=runs,
         params=params,
         db_configured=bool(AMIBROKER_DB_PATH),
+        default_symbol=GCZ25_SYMBOL,
     )
 
 
@@ -1093,6 +1165,7 @@ def run_with_params(strategy_id: str):
 
     version_id = request.form.get("version_id")
     run_mode = int(request.form.get("run_mode", "2"))
+    symbol = request.form.get("symbol", "").strip() or None
 
     # Get the version's AFL content
     version = db_get_version(version_id)
@@ -1163,7 +1236,7 @@ def run_with_params(strategy_id: str):
     # Run backtest in background
     thread = threading.Thread(
         target=_run_backtest_background,
-        args=(strategy_id, new_version_id, run_mode),
+        args=(strategy_id, new_version_id, run_mode, symbol),
         daemon=True,
     )
     thread.start()
@@ -1468,10 +1541,11 @@ def backtest_run():
 
     strategy_id = request.form.get("strategy_id", "").strip() or None
     version_id = request.form.get("version_id", "").strip() or None
+    symbol = request.form.get("symbol", "").strip() or None
 
     thread = threading.Thread(
         target=_run_backtest_background,
-        args=(strategy_id, version_id),
+        args=(strategy_id, version_id, None, symbol),
         daemon=True,
     )
     thread.start()
@@ -1491,6 +1565,17 @@ def backtest_status_page():
             log_content = "Error reading log file."
     with _backtest_lock:
         state = dict(_backtest_state)
+    # Cross-check DB when in-memory state says running — run.py may have
+    # already updated the DB to completed/failed before the background
+    # thread clears the running flag.
+    if state.get("running") and state.get("run_id"):
+        run_record = db_get_run(state["run_id"])
+        if run_record and run_record.get("status") in ("completed", "failed"):
+            state["running"] = False
+            state["success"] = run_record["status"] == "completed"
+            if not state.get("finished_at"):
+                state["finished_at"] = run_record.get("completed_at",
+                    datetime.now(timezone.utc).isoformat())
     return render_template(
         "backtest_status.html",
         state=state,
@@ -1507,6 +1592,18 @@ def api_backtest_status():
     return jsonify(state)
 
 
+@app.route("/api/symbols")
+def api_symbols():
+    """Return available symbols from the AmiBroker database."""
+    try:
+        from scripts.ole_backtest import list_symbols
+        symbols = list_symbols()
+    except Exception as exc:
+        logger.warning("Failed to list symbols from AmiBroker: %s", exc)
+        symbols = []
+    return jsonify({"symbols": symbols, "default": GCZ25_SYMBOL})
+
+
 @app.route("/api/run/<run_id>/opt-progress")
 def api_opt_progress(run_id: str):
     """Return real-time optimization progress for a running backtest.
@@ -1517,19 +1614,24 @@ def api_opt_progress(run_id: str):
     run_dir = RESULTS_DIR / run_id
     status_file = run_dir / "opt_status.json"
 
-    # Determine overall run status
+    # Determine overall run status — always check DB for ground truth first
+    # to avoid race condition where _backtest_state["running"] is still True
+    # but run.py has already updated the DB to "completed".
     with _backtest_lock:
         is_running = _backtest_state["running"] and _backtest_state.get("run_id") == run_id
         run_success = _backtest_state.get("success")
 
-    if not is_running and run_success is not None:
-        run_status = "completed" if run_success else "failed"
+    run_record = db_get_run(run_id)
+    db_status = run_record["status"] if run_record else None
+
+    if db_status in ("completed", "failed"):
+        run_status = db_status
     elif is_running:
         run_status = "running"
+    elif run_success is not None:
+        run_status = "completed" if run_success else "failed"
     else:
-        # Check DB for completed runs
-        run_record = db_get_run(run_id)
-        run_status = run_record["status"] if run_record else "unknown"
+        run_status = db_status or "unknown"
 
     if status_file.exists():
         try:

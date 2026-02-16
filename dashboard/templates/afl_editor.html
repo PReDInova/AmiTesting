@@ -57,6 +57,40 @@
     </a>
 </div>
 
+<!-- ── Indicator Includes Panel ────────────────────────── -->
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between"
+         data-bs-toggle="collapse" data-bs-target="#indicatorPanel"
+         style="cursor: pointer;">
+        <span><i class="bi bi-puzzle me-1"></i>Indicator Includes</span>
+        <i class="bi bi-chevron-down" id="indicatorChevron"></i>
+    </div>
+    <div id="indicatorPanel" class="collapse">
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                Select indicators to include in your strategy. Configure parameters, then generate the
+                <code>#include_once</code> block to insert at the top of your AFL.
+            </p>
+
+            <!-- Indicator checkboxes loaded dynamically -->
+            <div id="indicatorSelector" class="mb-3">
+                <div class="text-center py-3">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <span class="ms-2 text-muted small">Loading indicators...</span>
+                </div>
+            </div>
+
+            <!-- Generate button -->
+            <button type="button" class="btn btn-primary btn-sm" id="btnGenerateIncludes" disabled>
+                <i class="bi bi-code-slash me-1"></i>Generate Include Block
+            </button>
+            <a href="/indicators" class="btn btn-outline-secondary btn-sm ms-2">
+                <i class="bi bi-puzzle me-1"></i>Manage Library
+            </a>
+        </div>
+    </div>
+</div>
+
 <!-- ── Info Card ───────────────────────────────────────── -->
 <div class="callout-blue">
     <i class="bi bi-info-circle me-1"></i>
@@ -100,6 +134,149 @@ document.addEventListener('DOMContentLoaded', function() {
             editor.save();
             document.getElementById('afl-form').submit();
         }
+    });
+
+    // ── Indicator Includes Panel ────────────────────────
+    var indicatorData = [];
+
+    // Toggle chevron on collapse
+    var panel = document.getElementById('indicatorPanel');
+    var chevron = document.getElementById('indicatorChevron');
+    panel.addEventListener('show.bs.collapse', function() {
+        chevron.classList.replace('bi-chevron-down', 'bi-chevron-up');
+        loadIndicatorLibrary();
+    });
+    panel.addEventListener('hide.bs.collapse', function() {
+        chevron.classList.replace('bi-chevron-up', 'bi-chevron-down');
+    });
+
+    function loadIndicatorLibrary() {
+        fetch('/api/indicators/library')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                indicatorData = data;
+                renderIndicatorSelector(data);
+            })
+            .catch(function() {
+                document.getElementById('indicatorSelector').innerHTML =
+                    '<div class="text-muted small">Failed to load indicators. <a href="/indicators">Manage library</a></div>';
+            });
+    }
+
+    function renderIndicatorSelector(indicators) {
+        var container = document.getElementById('indicatorSelector');
+        if (!indicators.length) {
+            container.innerHTML = '<div class="text-muted small">No indicators found. <a href="/indicators/create">Create one</a> or <form method="POST" action="/indicators/import" class="d-inline"><button type="submit" class="btn btn-link btn-sm p-0">import existing</button></form>.</div>';
+            return;
+        }
+
+        var html = '';
+        indicators.forEach(function(ind) {
+            if (ind.indicator_type !== 'include') return; // only show include-type
+            var paramHtml = '';
+
+            // Required inputs (no default -- must be filled)
+            (ind.required_inputs || []).forEach(function(inp) {
+                if (inp.optional) return;
+                paramHtml += '<div class="row g-2 mb-1 align-items-center">' +
+                    '<div class="col-4"><label class="form-label mb-0 small"><code>' + inp.var_name + '</code> <span class="text-danger">*</span></label></div>' +
+                    '<div class="col-8"><input type="text" class="form-control form-control-sm ind-param" ' +
+                    'data-indicator="' + ind.filename + '" data-var="' + inp.var_name + '" ' +
+                    'placeholder="' + (inp.description || 'required') + '"></div></div>';
+            });
+
+            // Guarded params (have defaults)
+            (ind.params || []).forEach(function(p) {
+                var defaultVal = p.default;
+                if (p.param_type === 'ParamToggle') {
+                    var opts = (p.toggle_options || '').split('|');
+                    paramHtml += '<div class="row g-2 mb-1 align-items-center">' +
+                        '<div class="col-4"><label class="form-label mb-0 small"><code>' + p.var_name + '</code></label></div>' +
+                        '<div class="col-8"><select class="form-select form-select-sm ind-param" ' +
+                        'data-indicator="' + ind.filename + '" data-var="' + p.var_name + '">';
+                    opts.forEach(function(opt, i) {
+                        paramHtml += '<option value="' + i + '"' + (i == defaultVal ? ' selected' : '') + '>' + opt + '</option>';
+                    });
+                    paramHtml += '</select></div></div>';
+                } else {
+                    paramHtml += '<div class="row g-2 mb-1 align-items-center">' +
+                        '<div class="col-4"><label class="form-label mb-0 small"><code>' + p.var_name + '</code></label></div>' +
+                        '<div class="col-8"><input type="text" class="form-control form-control-sm ind-param" ' +
+                        'data-indicator="' + ind.filename + '" data-var="' + p.var_name + '" ' +
+                        'value="' + defaultVal + '" placeholder="default: ' + defaultVal + '"></div></div>';
+                }
+            });
+
+            html += '<div class="border rounded p-2 mb-2">' +
+                '<div class="form-check">' +
+                '<input class="form-check-input ind-check" type="checkbox" id="ind-' + ind.filename + '" data-filename="' + ind.filename + '">' +
+                '<label class="form-check-label fw-bold small" for="ind-' + ind.filename + '">' +
+                ind.display_name + ' <code class="text-muted fw-normal">(' + ind.filename + ')</code></label>' +
+                '</div>' +
+                '<div class="ind-params mt-2 ps-4" style="display:none;">' + paramHtml + '</div>' +
+                '</div>';
+        });
+
+        if (!html) {
+            container.innerHTML = '<div class="text-muted small">No include-type indicators found. <a href="/indicators/create">Create one</a>.</div>';
+            return;
+        }
+        container.innerHTML = html;
+
+        // Toggle param visibility on checkbox change
+        container.querySelectorAll('.ind-check').forEach(function(cb) {
+            cb.addEventListener('change', function() {
+                var params = this.closest('.border').querySelector('.ind-params');
+                params.style.display = this.checked ? 'block' : 'none';
+                updateGenerateButton();
+            });
+        });
+    }
+
+    function updateGenerateButton() {
+        var anyChecked = document.querySelectorAll('.ind-check:checked').length > 0;
+        document.getElementById('btnGenerateIncludes').disabled = !anyChecked;
+    }
+
+    function getSelectedIndicators() {
+        var selected = [];
+        document.querySelectorAll('.ind-check:checked').forEach(function(cb) {
+            var filename = cb.dataset.filename;
+            var params = {};
+            document.querySelectorAll('.ind-param[data-indicator="' + filename + '"]').forEach(function(input) {
+                var val = input.value.trim();
+                if (val) {
+                    params[input.dataset.var] = val;
+                }
+            });
+            selected.push({filename: filename, params: params});
+        });
+        return selected;
+    }
+
+    document.getElementById('btnGenerateIncludes').addEventListener('click', function() {
+        var selected = getSelectedIndicators();
+        if (!selected.length) return;
+
+        fetch('/api/indicators/generate-include', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({indicators: selected})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                alert('Error: ' + data.error);
+                return;
+            }
+            // Insert at top of editor
+            var current = editor.getValue();
+            editor.setValue(data.afl_block + '\n\n' + current);
+            editor.setCursor(0, 0);
+        })
+        .catch(function(err) {
+            alert('Failed to generate include block: ' + err);
+        });
     });
 });
 </script>

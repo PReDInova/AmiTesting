@@ -2,9 +2,9 @@
 <AmiBroker-Analysis CompactMode="0">
 <General>
 <FormatVersion>1</FormatVersion>
-<Symbol></Symbol>
-<FormulaPath>C:\\Users\\prestondinova\\Documents\\AmiTesting\\afl\\ma_crossover.afl</FormulaPath>
-<FormulaContent>// SMA Crossover Strategy for /GC Tick Data (Asian Session)\r\n//\r\n// Aggregates tick data into 1-minute bars, then applies a fast/slow\r\n// SMA crossover.  Designed for Gold futures tick data.\r\n//\r\n// Parameters:\r\n//   Timeframe: 1-minute (in1Minute)\r\n//   Fast MA Period: 10  (10-minute SMA)\r\n//   Slow MA Period: 30  (30-minute SMA)\r\n\r\n// Aggregate ticks into 1-minute bars for cleaner signals\r\nTimeFrameSet(in1Minute);\r\n\r\nfastMA = MA(Close, 10);\r\nslowMA = MA(Close, 30);\r\n\r\nbuySignal  = Cross(fastMA, slowMA);\r\nsellSignal = Cross(slowMA, fastMA);\r\n\r\n// Restore to native (tick) timeframe and expand signals\r\nTimeFrameRestore();\r\n\r\nfastMA     = TimeFrameExpand(fastMA, in1Minute);\r\nslowMA     = TimeFrameExpand(slowMA, in1Minute);\r\nbuySignal  = TimeFrameExpand(buySignal, in1Minute, expandFirst);\r\nsellSignal = TimeFrameExpand(sellSignal, in1Minute, expandFirst);\r\n\r\n// Entry/Exit (long only - disable short selling)\r\nBuy   = buySignal;\r\nSell  = sellSignal;\r\nShort = 0;\r\nCover = 0;\r\n\r\n// Position sizing - 1 contract\r\nSetPositionSize(1, spsShares);\r\n\r\n// Remove excess signals\r\nBuy  = ExRem(Buy, Sell);\r\nSell = ExRem(Sell, Buy);\r\n\r\n// Plot for visual verification\r\nPlot(Close, "Price", colorDefault, styleLine);\r\nPlot(fastMA, "Fast MA(10min)", colorGreen, styleLine);\r\nPlot(slowMA, "Slow MA(30min)", colorRed, styleLine);\r\n\r\nPlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low);\r\nPlotShapes(Sell * shapeDownArrow, colorRed, 0, High);\r\n</FormulaContent>
+<Symbol>GCZ5</Symbol>
+<FormulaPath>C:\\Users\\prestondinova\\Documents\\AmiTesting\\apx\\strategy_e3600a98-7b2b-4320-94ac-a9a92e378870.afl</FormulaPath>
+<FormulaContent></FormulaContent>
 <ApplyTo>1</ApplyTo>
 <RangeType>0</RangeType>
 <RangeAmount>1</RangeAmount>

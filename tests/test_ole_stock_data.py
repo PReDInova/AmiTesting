@@ -302,3 +302,128 @@ class TestOhlcvCache:
             assert result["data"] == []
         finally:
             mod.CACHE_DIR = original_cache
+
+
+# ---------------------------------------------------------------------------
+# Interval detection tests (Sprint 4)
+# ---------------------------------------------------------------------------
+
+class TestDataIntervalDetection:
+    """Tests for StockDataFetcher.detect_data_interval()."""
+
+    def test_detect_tick_data(self):
+        """Sub-second or few-second gaps should return 0 (tick-level)."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 0, 0)
+        ticks = [
+            {"datetime": base + timedelta(seconds=i * 2)}
+            for i in range(50)
+        ]
+        assert StockDataFetcher.detect_data_interval(ticks) == 0
+
+    def test_detect_1min_bars(self):
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 0, 0)
+        bars = [
+            {"datetime": base + timedelta(minutes=i)}
+            for i in range(50)
+        ]
+        assert StockDataFetcher.detect_data_interval(bars) == 60
+
+    def test_detect_5min_bars(self):
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 0, 0)
+        bars = [
+            {"datetime": base + timedelta(minutes=i * 5)}
+            for i in range(50)
+        ]
+        assert StockDataFetcher.detect_data_interval(bars) == 300
+
+    def test_detect_single_bar(self):
+        """With only 1 data point, we can't detect — should return 0."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        assert StockDataFetcher.detect_data_interval([{"datetime": datetime.now()}]) == 0
+
+    def test_detect_empty(self):
+        from scripts.ole_stock_data import StockDataFetcher
+
+        assert StockDataFetcher.detect_data_interval([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Aggregation tests (Sprint 4)
+# ---------------------------------------------------------------------------
+
+class TestAggregateBars:
+    """Tests for StockDataFetcher._aggregate_bars()."""
+
+    def test_aggregate_ticks_to_1min(self):
+        """3 ticks in the same minute should produce 1 one-minute bar."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 14, 0)
+        ticks = [
+            {"datetime": base + timedelta(seconds=0),  "open": 100, "high": 102, "low": 99,  "close": 101, "volume": 10},
+            {"datetime": base + timedelta(seconds=20), "open": 101, "high": 103, "low": 100, "close": 102, "volume": 15},
+            {"datetime": base + timedelta(seconds=40), "open": 102, "high": 104, "low": 101, "close": 103, "volume": 20},
+        ]
+        bars = StockDataFetcher._aggregate_bars(ticks, 60)
+        assert len(bars) == 1
+        assert bars[0]["open"] == 100
+        assert bars[0]["high"] == 104
+        assert bars[0]["low"] == 99
+        assert bars[0]["close"] == 103
+        assert bars[0]["volume"] == 45
+
+    def test_aggregate_1min_to_5min(self):
+        """10 one-minute bars should produce 2 five-minute bars."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 0, 0)
+        ticks = [
+            {"datetime": base + timedelta(minutes=i),
+             "open": 100 + i, "high": 102 + i, "low": 99 + i,
+             "close": 101 + i, "volume": 10}
+            for i in range(10)
+        ]
+        bars = StockDataFetcher._aggregate_bars(ticks, 300)
+        assert len(bars) == 2
+        # First 5-min bar: open from minute 0, close from minute 4
+        assert bars[0]["open"] == 100
+        assert bars[0]["close"] == 105
+        assert bars[0]["volume"] == 50
+
+    def test_aggregate_1min_to_daily(self):
+        """All bars on the same day should produce 1 daily bar."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 9, 0, 0)
+        ticks = [
+            {"datetime": base + timedelta(minutes=i),
+             "open": 100 + i, "high": 102 + i, "low": 99 + i,
+             "close": 101 + i, "volume": 10}
+            for i in range(60)
+        ]
+        bars = StockDataFetcher._aggregate_bars(ticks, 86400)
+        assert len(bars) == 1
+        assert bars[0]["open"] == 100
+        assert bars[0]["volume"] == 600
+
+    def test_format_bars_no_aggregation(self):
+        """_format_bars should passthrough without resampling."""
+        from scripts.ole_stock_data import StockDataFetcher
+
+        base = datetime(2025, 7, 21, 1, 0, 0)
+        ticks = [
+            {"datetime": base + timedelta(minutes=i),
+             "open": 100.0, "high": 101.0, "low": 99.0,
+             "close": 100.5, "volume": 50.0}
+            for i in range(5)
+        ]
+        bars = StockDataFetcher._format_bars(ticks)
+        assert len(bars) == 5
+        assert bars[0]["open"] == 100.0

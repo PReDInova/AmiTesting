@@ -24,7 +24,9 @@ stochSmooth     = Param("Stoch Smoothing", 3, 1, 7, 1);
 stochOB         = Param("Stoch Overbought", 80, 70, 90, 5);
 stochOS         = Param("Stoch Oversold", 20, 10, 30, 5);
 nearBoundaryPct = Param("Near Boundary %", 25, 10, 50, 5);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 0.75, 0.1, 5.0, 0.1);
+profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -41,6 +43,8 @@ sd = StochD(stochK, stochD, stochSmooth);
 
 // ---- StdDev Exit Indicator ----
 sdMultiplier = sdMult;
+sdLookback = sdBars;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- Near-boundary zones ----
@@ -89,7 +93,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);

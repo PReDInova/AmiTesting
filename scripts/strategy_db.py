@@ -78,12 +78,98 @@ def init_db(db_path: Path = None) -> None:
                 results_csv  TEXT NOT NULL DEFAULT '',
                 results_html TEXT NOT NULL DEFAULT '',
                 apx_file     TEXT NOT NULL DEFAULT '',
+                afl_content  TEXT NOT NULL DEFAULT '',
                 status       TEXT NOT NULL DEFAULT 'pending',
                 metrics_json TEXT NOT NULL DEFAULT '{}',
                 started_at   TIMESTAMP,
                 completed_at TIMESTAMP,
                 created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS batch_runs (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL DEFAULT '',
+                status          TEXT NOT NULL DEFAULT 'pending',
+                total_count     INTEGER NOT NULL DEFAULT 0,
+                completed_count INTEGER NOT NULL DEFAULT 0,
+                failed_count    INTEGER NOT NULL DEFAULT 0,
+                run_mode        INTEGER NOT NULL DEFAULT 2,
+                strategy_ids    TEXT NOT NULL DEFAULT '[]',
+                run_ids         TEXT NOT NULL DEFAULT '[]',
+                results_json    TEXT NOT NULL DEFAULT '{}',
+                started_at      TIMESTAMP,
+                completed_at    TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS param_tooltips (
+                name       TEXT PRIMARY KEY,
+                indicator  TEXT NOT NULL DEFAULT '',
+                math       TEXT NOT NULL DEFAULT '',
+                param      TEXT NOT NULL DEFAULT '',
+                typical    TEXT NOT NULL DEFAULT '',
+                guidance   TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS indicator_tooltips (
+                keyword     TEXT PRIMARY KEY,
+                name        TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                math        TEXT NOT NULL DEFAULT '',
+                usage       TEXT NOT NULL DEFAULT '',
+                key_params  TEXT NOT NULL DEFAULT '',
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
+
+        # Add afl_content column to existing backtest_runs tables (migration)
+        try:
+            conn.execute("ALTER TABLE backtest_runs ADD COLUMN afl_content TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Add params_json column to existing backtest_runs tables (migration)
+        try:
+            conn.execute("ALTER TABLE backtest_runs ADD COLUMN params_json TEXT NOT NULL DEFAULT '{}'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Add optimization-related columns to backtest_runs (migration)
+        for col_def in [
+            "is_optimization INTEGER DEFAULT 0",
+            "total_combos INTEGER DEFAULT 0",
+            "columns_json TEXT DEFAULT '[]'",
+        ]:
+            try:
+                conn.execute(f"ALTER TABLE backtest_runs ADD COLUMN {col_def}")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+        # Add symbol column to backtest_runs (migration)
+        try:
+            conn.execute("ALTER TABLE backtest_runs ADD COLUMN symbol TEXT NOT NULL DEFAULT ''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Create optimization_combos table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS optimization_combos (
+                id           TEXT PRIMARY KEY,
+                run_id       TEXT NOT NULL REFERENCES backtest_runs(id) ON DELETE CASCADE,
+                combo_index  INTEGER NOT NULL,
+                params_json  TEXT NOT NULL DEFAULT '{}',
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                net_profit   REAL,
+                num_trades   INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_opt_combos_run ON optimization_combos(run_id);
+            CREATE INDEX IF NOT EXISTS idx_opt_combos_profit ON optimization_combos(run_id, net_profit DESC);
         """)
         conn.commit()
 
@@ -148,6 +234,7 @@ def _migrate_legacy_if_needed(conn: sqlite3.Connection) -> None:
                 results_csv  TEXT NOT NULL DEFAULT '',
                 results_html TEXT NOT NULL DEFAULT '',
                 apx_file     TEXT NOT NULL DEFAULT '',
+                afl_content  TEXT NOT NULL DEFAULT '',
                 status       TEXT NOT NULL DEFAULT 'pending',
                 metrics_json TEXT NOT NULL DEFAULT '{}',
                 started_at   TIMESTAMP,
@@ -194,6 +281,7 @@ def _migrate_legacy_if_needed(conn: sqlite3.Connection) -> None:
             results_csv  TEXT NOT NULL DEFAULT '',
             results_html TEXT NOT NULL DEFAULT '',
             apx_file     TEXT NOT NULL DEFAULT '',
+            afl_content  TEXT NOT NULL DEFAULT '',
             status       TEXT NOT NULL DEFAULT 'pending',
             metrics_json TEXT NOT NULL DEFAULT '{}',
             started_at   TIMESTAMP,
@@ -454,20 +542,26 @@ def create_run(
     version_id: str,
     strategy_id: str,
     apx_file: str = "",
+    afl_content: str = "",
+    params_json: str = "{}",
+    symbol: str = "",
     db_path: Path = None,
 ) -> str:
     """Create a new backtest run record. Returns the run UUID.
 
     The results_dir is automatically set to ``results/<run_id>``.
+    ``afl_content`` should be the actual AFL code used for this run so the
+    results page can display exactly what was executed.
+    ``params_json`` stores a JSON string of run parameters (e.g. run_mode).
     """
     run_id = _new_uuid()
     results_dir = f"results/{run_id}"
     conn = _get_connection(db_path)
     try:
         conn.execute(
-            """INSERT INTO backtest_runs (id, version_id, strategy_id, results_dir, apx_file, status, started_at)
-               VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)""",
-            (run_id, version_id, strategy_id, results_dir, apx_file),
+            """INSERT INTO backtest_runs (id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol, status, started_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)""",
+            (run_id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol),
         )
         conn.commit()
         return run_id
@@ -482,6 +576,9 @@ def update_run(
     results_html: str = None,
     metrics_json: str = None,
     completed_at: str = None,
+    is_optimization: int = None,
+    total_combos: int = None,
+    columns_json: str = None,
     db_path: Path = None,
 ) -> bool:
     """Update a run record. Only non-None fields are updated."""
@@ -492,7 +589,10 @@ def update_run(
         for col, val in [("status", status), ("results_csv", results_csv),
                          ("results_html", results_html),
                          ("metrics_json", metrics_json),
-                         ("completed_at", completed_at)]:
+                         ("completed_at", completed_at),
+                         ("is_optimization", is_optimization),
+                         ("total_combos", total_combos),
+                         ("columns_json", columns_json)]:
             if val is not None:
                 fields.append(f"{col} = ?")
                 values.append(val)
@@ -520,6 +620,8 @@ def get_run(run_id: str, db_path: Path = None) -> dict | None:
             return None
         d = dict(row)
         d["metrics"] = json.loads(d.pop("metrics_json", "{}"))
+        d["params"] = json.loads(d.pop("params_json", "{}"))
+        d["columns"] = json.loads(d.pop("columns_json", "[]") or "[]")
         return d
     finally:
         conn.close()
@@ -551,6 +653,7 @@ def list_runs(
         for r in rows:
             d = dict(r)
             d["metrics"] = json.loads(d.pop("metrics_json", "{}"))
+            d["run_params"] = json.loads(d.pop("params_json", "{}"))
             result.append(d)
         return result
     finally:
@@ -585,6 +688,250 @@ def delete_run(run_id: str, db_path: Path = None) -> bool:
         return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Optimization combo CRUD
+# ---------------------------------------------------------------------------
+
+def store_optimization_combos(
+    run_id: str,
+    df,
+    param_columns: list[str],
+    metric_columns: list[str],
+    db_path: Path = None,
+) -> int:
+    """Bulk-insert all optimization combo rows from a DataFrame.
+
+    Parameters
+    ----------
+    run_id : str
+        The backtest run UUID these combos belong to.
+    df : pandas.DataFrame
+        The optimization results DataFrame (one row per combo).
+    param_columns : list[str]
+        Column names that are strategy parameters.
+    metric_columns : list[str]
+        Column names that are result metrics.
+
+    Returns
+    -------
+    int
+        Number of rows inserted.
+    """
+    import pandas as pd
+
+    if df is None or df.empty:
+        return 0
+
+    # Find net profit and # trades columns for denormalized fields
+    net_profit_col = None
+    for col in df.columns:
+        cl = col.lower().strip()
+        if cl in ("net profit", "net profit %", "profit") and "%" not in cl:
+            net_profit_col = col
+            break
+    if net_profit_col is None:
+        for col in df.columns:
+            if "net profit" in col.lower().strip():
+                net_profit_col = col
+                break
+
+    trades_col = None
+    for col in df.columns:
+        if col.strip().lower() in ("# trades", "trades", "all trades"):
+            trades_col = col
+            break
+
+    rows = []
+    for idx, row in df.iterrows():
+        combo_id = _new_uuid()
+        params = {c: _safe_json_value(row.get(c)) for c in param_columns if c in df.columns}
+        metrics = {c: _safe_json_value(row.get(c)) for c in metric_columns if c in df.columns}
+
+        net_profit = None
+        if net_profit_col:
+            try:
+                net_profit = float(pd.to_numeric(row[net_profit_col], errors="coerce"))
+            except (ValueError, TypeError):
+                pass
+
+        num_trades = None
+        if trades_col:
+            try:
+                num_trades = int(pd.to_numeric(row[trades_col], errors="coerce"))
+            except (ValueError, TypeError):
+                pass
+
+        rows.append((
+            combo_id,
+            run_id,
+            int(idx),
+            json.dumps(params),
+            json.dumps(metrics),
+            net_profit,
+            num_trades,
+        ))
+
+    conn = _get_connection(db_path)
+    try:
+        conn.executemany(
+            """INSERT INTO optimization_combos
+               (id, run_id, combo_index, params_json, metrics_json, net_profit, num_trades)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
+        conn.commit()
+        logger.info("Stored %d optimization combos for run %s", len(rows), run_id)
+        return len(rows)
+    finally:
+        conn.close()
+
+
+def _safe_json_value(val):
+    """Convert a pandas/numpy value to a JSON-safe Python type."""
+    import math
+    if val is None:
+        return None
+    try:
+        import numpy as np
+        if isinstance(val, (np.integer,)):
+            return int(val)
+        if isinstance(val, (np.floating,)):
+            f = float(val)
+            return None if math.isnan(f) else f
+        if isinstance(val, (np.bool_,)):
+            return bool(val)
+    except ImportError:
+        pass
+    if isinstance(val, float) and math.isnan(val):
+        return None
+    return val
+
+
+def get_optimization_combos(
+    run_id: str,
+    order_by: str = "net_profit",
+    ascending: bool = False,
+    limit: int = None,
+    db_path: Path = None,
+) -> list[dict]:
+    """Fetch optimization combo rows for a run.
+
+    Returns a list of dicts with deserialized params and metrics.
+    """
+    direction = "ASC" if ascending else "DESC"
+    # Only allow safe column names for ORDER BY
+    safe_cols = {"net_profit", "num_trades", "combo_index"}
+    order_col = order_by if order_by in safe_cols else "net_profit"
+
+    query = f"SELECT * FROM optimization_combos WHERE run_id = ? ORDER BY {order_col} {direction}"
+    params = [run_id]
+    if limit:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(query, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["params"] = json.loads(d.pop("params_json", "{}"))
+            d["metrics"] = json.loads(d.pop("metrics_json", "{}"))
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+def reconstruct_optimization_parsed(run_id: str, db_path: Path = None) -> dict | None:
+    """Rebuild the exact dict shape that ``_parse_optimization_results()`` produces.
+
+    Returns None if no SQL combo data exists for this run, so callers can
+    fall back to CSV parsing.
+
+    The returned dict has keys:
+        trades, metrics, columns, error, is_optimization
+    matching the shape expected by ``results_detail.html``.
+    """
+    import pandas as pd
+
+    run = get_run(run_id, db_path)
+    if run is None:
+        return None
+
+    # Check if this run has SQL combo data
+    if not run.get("is_optimization") or not run.get("total_combos"):
+        return None
+
+    combos = get_optimization_combos(run_id, db_path=db_path)
+    if not combos:
+        return None
+
+    # Recover ordered column list from the run record
+    all_columns = run.get("columns", [])
+
+    # Classify columns into param vs metric using the same keyword set as app.py
+    metric_keywords = {
+        "net profit", "profit", "# trades", "all trades", "avg. profit",
+        "avg. bars", "drawdown", "max. trade", "winners", "losers",
+        "profit factor", "sharpe", "ulcer", "recovery", "payoff",
+        "cagr", "rar", "exposure", "risk", "% profitable",
+    }
+    metric_cols = []
+    param_cols = []
+    for col in all_columns:
+        cl = col.lower().strip()
+        if cl == "symbol":
+            continue
+        is_metric = any(kw in cl for kw in metric_keywords)
+        if is_metric:
+            metric_cols.append(col)
+        else:
+            param_cols.append(col)
+
+    # Reconstruct row dicts in the original column order
+    trades = []
+    for combo in combos:
+        row = {}
+        row.update(combo["params"])
+        row.update(combo["metrics"])
+        trades.append(row)
+
+    # Build summary metrics (same shape as _parse_optimization_results)
+    metrics = {
+        "combos_tested": len(combos),
+        "param_columns": param_cols,
+        "metric_columns": metric_cols,
+    }
+
+    # Compute summary stats from denormalized net_profit
+    net_profits = [c["net_profit"] for c in combos if c.get("net_profit") is not None]
+    if net_profits:
+        metrics["best_net_profit"] = round(max(net_profits), 2)
+        metrics["worst_net_profit"] = round(min(net_profits), 2)
+        metrics["avg_net_profit"] = round(sum(net_profits) / len(net_profits), 2)
+        metrics["profitable_combos"] = sum(1 for p in net_profits if p > 0)
+        # Find the net profit column name
+        for col in all_columns:
+            cl = col.lower().strip()
+            if cl in ("net profit", "net profit %", "profit") and "%" not in cl:
+                metrics["net_profit_column"] = col
+                break
+
+    # Compute avg trades
+    trade_counts = [c.get("num_trades") for c in combos if c.get("num_trades") is not None]
+    if trade_counts:
+        metrics["avg_trades"] = round(sum(trade_counts) / len(trade_counts), 1)
+
+    return {
+        "trades": trades,
+        "metrics": metrics,
+        "columns": all_columns,
+        "error": None,
+        "is_optimization": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -640,10 +987,92 @@ def get_strategy_summary(strategy_id: str, db_path: Path = None) -> dict | None:
 # Seed helper
 # ---------------------------------------------------------------------------
 
+def seed_strategies_from_dir(db_path: Path = None) -> int:
+    """Import strategy AFL files from the strategies/ directory.
+
+    Scans ``strategies/*.afl``, parses each file's header comments to extract
+    a name and description, then creates a strategy + version-1 record for any
+    file whose name is not already in the database.
+
+    Returns the number of newly imported strategies.
+    """
+    from config.settings import STRATEGIES_DIR
+
+    if not STRATEGIES_DIR.exists():
+        return 0
+
+    afl_files = sorted(STRATEGIES_DIR.glob("*.afl"))
+    if not afl_files:
+        return 0
+
+    existing_names = {s["name"] for s in list_strategies(db_path)}
+    imported = 0
+
+    for afl_path in afl_files:
+        try:
+            content = afl_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        # Parse header: line 2 is the name, lines after the separator are description
+        lines = content.splitlines()
+        name = afl_path.stem  # fallback
+        description_lines = []
+        in_description = False
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Line 2 (index 1) is typically the name line: "// A01 - TEMA + ADX Trend Filter"
+            if i == 1 and stripped.startswith("//"):
+                candidate = stripped.lstrip("/").strip()
+                if candidate:
+                    name = candidate
+            # After the second separator (index 2), collect description lines
+            elif i > 2 and stripped.startswith("//"):
+                text = stripped.lstrip("/").strip()
+                if text:
+                    in_description = True
+                    description_lines.append(text)
+                elif in_description:
+                    description_lines.append("")  # preserve paragraph breaks
+            elif i > 2 and not stripped.startswith("//"):
+                break  # end of header comment block
+
+        if name in existing_names:
+            continue
+
+        description = "\n".join(description_lines).strip()
+
+        strategy_id = create_strategy(
+            name=name,
+            summary=description_lines[0] if description_lines else "",
+            description=description,
+            symbol="/GC Gold Futures (Asian Session)",
+            db_path=db_path,
+        )
+
+        create_version(
+            strategy_id=strategy_id,
+            afl_content=content,
+            label="Initial version",
+            db_path=db_path,
+        )
+
+        existing_names.add(name)
+        imported += 1
+        logger.info("Imported strategy from %s: %s", afl_path.name, name)
+
+    if imported:
+        logger.info("Imported %d strategies from %s", imported, STRATEGIES_DIR)
+    return imported
+
+
 def seed_default_strategies(db_path: Path = None) -> None:
     """Populate the DB with the default SMA crossover strategy if empty."""
     if list_strategies(db_path):
-        return  # already seeded
+        # DB already has strategies -- still check for new files in strategies/
+        seed_strategies_from_dir(db_path)
+        return
 
     # Read AFL content from disk
     project_root = Path(__file__).resolve().parent.parent
@@ -723,3 +1152,325 @@ def seed_default_strategies(db_path: Path = None) -> None:
         )
 
     logger.info("Seeded default SMA crossover strategy into database.")
+
+    # Also import any strategies from the strategies/ directory
+    seed_strategies_from_dir(db_path)
+
+
+# ---------------------------------------------------------------------------
+# Batch run CRUD
+# ---------------------------------------------------------------------------
+
+def create_batch(name: str = "", strategy_ids: list = None, run_mode: int = 2, db_path: Path = None) -> str:
+    """Create a new batch run record. Returns the batch UUID."""
+    batch_id = _new_uuid()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO batch_runs (id, name, status, total_count, run_mode, strategy_ids)
+               VALUES (?, ?, 'pending', ?, ?, ?)""",
+            (batch_id, name, len(strategy_ids or []), run_mode, json.dumps(strategy_ids or [])),
+        )
+        conn.commit()
+        return batch_id
+    finally:
+        conn.close()
+
+
+def update_batch(batch_id: str, status: str = None, completed_count: int = None, failed_count: int = None, run_ids: list = None, results_json: str = None, started_at: str = None, completed_at: str = None, db_path: Path = None) -> bool:
+    """Update a batch run record. Only non-None fields are updated."""
+    conn = _get_connection(db_path)
+    try:
+        fields = []
+        values = []
+        for col, val in [("status", status), ("completed_count", completed_count),
+                         ("failed_count", failed_count),
+                         ("started_at", started_at), ("completed_at", completed_at),
+                         ("results_json", results_json)]:
+            if val is not None:
+                fields.append(f"{col} = ?")
+                values.append(val)
+        if run_ids is not None:
+            fields.append("run_ids = ?")
+            values.append(json.dumps(run_ids))
+        if not fields:
+            return True
+        values.append(batch_id)
+        cursor = conn.execute(
+            f"UPDATE batch_runs SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_batch(batch_id: str, db_path: Path = None) -> dict | None:
+    """Fetch a single batch run by UUID."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM batch_runs WHERE id = ?", (batch_id,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["strategy_ids"] = json.loads(d.get("strategy_ids", "[]"))
+        d["run_ids"] = json.loads(d.get("run_ids", "[]"))
+        d["results"] = json.loads(d.pop("results_json", "{}"))
+        return d
+    finally:
+        conn.close()
+
+
+def list_batches(limit: int = 20, db_path: Path = None) -> list[dict]:
+    """Return batch runs, newest first."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM batch_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["strategy_ids"] = json.loads(d.get("strategy_ids", "[]"))
+            d["run_ids"] = json.loads(d.get("run_ids", "[]"))
+            d["results"] = json.loads(d.pop("results_json", "{}"))
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Param tooltips CRUD
+# ---------------------------------------------------------------------------
+
+def list_param_tooltips(db_path: Path = None) -> list[dict]:
+    """Return all param tooltip rows, ordered by name."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM param_tooltips ORDER BY name"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_param_tooltip(name: str, db_path: Path = None) -> dict | None:
+    """Fetch a single param tooltip by parameter name."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM param_tooltips WHERE name = ?", (name,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_all_param_tooltips_dict(db_path: Path = None) -> dict[str, dict]:
+    """Return all tooltips as {name: {indicator, math, param, typical, guidance}}.
+
+    This matches the shape of the old hardcoded PARAM_INFO dict so it can
+    be used as a drop-in replacement in templates.
+    """
+    rows = list_param_tooltips(db_path)
+    result = {}
+    for r in rows:
+        result[r["name"]] = {
+            "indicator": r["indicator"],
+            "math": r["math"],
+            "param": r["param"],
+            "typical": r["typical"],
+            "guidance": r["guidance"],
+        }
+    return result
+
+
+def upsert_param_tooltip(
+    name: str,
+    indicator: str = "",
+    math: str = "",
+    param: str = "",
+    typical: str = "",
+    guidance: str = "",
+    db_path: Path = None,
+) -> bool:
+    """Insert or replace a param tooltip row."""
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO param_tooltips
+               (name, indicator, math, param, typical, guidance, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (name, indicator, math, param, typical, guidance),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_param_tooltip(name: str, db_path: Path = None) -> bool:
+    """Delete a param tooltip row. Returns True if a row was deleted."""
+    conn = _get_connection(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM param_tooltips WHERE name = ?", (name,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def seed_param_tooltips(db_path: Path = None) -> int:
+    """Seed param_tooltips table from the hardcoded PARAM_INFO dictionary.
+
+    Only inserts rows that don't already exist (preserves user edits).
+    Returns the number of rows inserted.
+    """
+    from scripts.param_info import PARAM_INFO
+
+    conn = _get_connection(db_path)
+    inserted = 0
+    try:
+        for name, info in PARAM_INFO.items():
+            existing = conn.execute(
+                "SELECT 1 FROM param_tooltips WHERE name = ?", (name,)
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """INSERT INTO param_tooltips
+                       (name, indicator, math, param, typical, guidance)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        name,
+                        info.get("indicator", ""),
+                        info.get("math", ""),
+                        info.get("param", ""),
+                        info.get("typical", ""),
+                        info.get("guidance", ""),
+                    ),
+                )
+                inserted += 1
+        conn.commit()
+        if inserted:
+            logger.info("Seeded %d param tooltips", inserted)
+        return inserted
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Indicator tooltips CRUD
+# ---------------------------------------------------------------------------
+
+def get_all_indicator_tooltips_dict(db_path: Path = None) -> dict[str, dict]:
+    """Return all indicator tooltips as {keyword: {name, description, math, usage, key_params}}."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM indicator_tooltips ORDER BY keyword"
+        ).fetchall()
+        result = {}
+        for r in rows:
+            d = dict(r)
+            result[d["keyword"]] = {
+                "name": d["name"],
+                "description": d["description"],
+                "math": d["math"],
+                "usage": d["usage"],
+                "key_params": d["key_params"],
+            }
+        return result
+    finally:
+        conn.close()
+
+
+def get_indicator_tooltip(keyword: str, db_path: Path = None) -> dict | None:
+    """Fetch a single indicator tooltip by keyword."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM indicator_tooltips WHERE keyword = ?", (keyword,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def upsert_indicator_tooltip(
+    keyword: str,
+    name: str = "",
+    description: str = "",
+    math: str = "",
+    usage: str = "",
+    key_params: str = "",
+    db_path: Path = None,
+) -> bool:
+    """Insert or replace an indicator tooltip row."""
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT OR REPLACE INTO indicator_tooltips
+               (keyword, name, description, math, usage, key_params, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+            (keyword, name, description, math, usage, key_params),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def delete_indicator_tooltip(keyword: str, db_path: Path = None) -> bool:
+    """Delete an indicator tooltip row. Returns True if a row was deleted."""
+    conn = _get_connection(db_path)
+    try:
+        cur = conn.execute(
+            "DELETE FROM indicator_tooltips WHERE keyword = ?", (keyword,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def seed_indicator_tooltips(db_path: Path = None) -> int:
+    """Seed indicator_tooltips table from INDICATOR_INFO.
+
+    Only inserts rows that don't already exist (preserves user edits).
+    Returns the number of rows inserted.
+    """
+    from scripts.param_info import INDICATOR_INFO
+
+    conn = _get_connection(db_path)
+    inserted = 0
+    try:
+        for keyword, info in INDICATOR_INFO.items():
+            existing = conn.execute(
+                "SELECT 1 FROM indicator_tooltips WHERE keyword = ?", (keyword,)
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """INSERT INTO indicator_tooltips
+                       (keyword, name, description, math, usage, key_params)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        keyword,
+                        info.get("name", ""),
+                        info.get("description", ""),
+                        info.get("math", ""),
+                        info.get("usage", ""),
+                        info.get("key_params", ""),
+                    ),
+                )
+                inserted += 1
+        conn.commit()
+        if inserted:
+            logger.info("Seeded %d indicator tooltips", inserted)
+        return inserted
+    finally:
+        conn.close()

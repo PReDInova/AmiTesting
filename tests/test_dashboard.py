@@ -251,3 +251,47 @@ def test_get_status_no_sidecar(sample_csv):
 
     status = get_status(filepath)
     assert status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Indicator Explorer – zoom preservation tests
+# ---------------------------------------------------------------------------
+
+
+def test_explorer_preserves_zoom_on_param_change():
+    """renderIndicators() should save and restore the visible logical range
+    so that changing indicator parameters does not reset the user's zoom."""
+    template_path = (
+        Path(__file__).resolve().parent.parent
+        / "dashboard"
+        / "templates"
+        / "indicator_explorer.html"
+    )
+    html = template_path.read_text(encoding="utf-8")
+
+    # The function must capture the current range BEFORE removing series
+    assert "getVisibleLogicalRange" in html, (
+        "renderIndicators must save the visible range before modifying series"
+    )
+
+    # After all series are re-added, it must restore the saved range
+    assert "setVisibleLogicalRange(savedRange)" in html, (
+        "renderIndicators must restore the saved range after updating series"
+    )
+
+    # Verify save happens before remove, and restore happens after setData
+    save_pos = html.index("getVisibleLogicalRange")
+    remove_pos = html.index("mainChart.removeSeries")
+    restore_pos = html.index("setVisibleLogicalRange(savedRange)")
+    set_data_positions = [
+        i for i in range(len(html))
+        if html[i:i + len("series.setData(")] == "series.setData("
+    ]
+
+    assert save_pos < remove_pos, (
+        "Range must be saved before series are removed"
+    )
+    # Restore must come after at least one setData call
+    assert any(pos < restore_pos for pos in set_data_positions), (
+        "Range must be restored after indicator data is set"
+    )

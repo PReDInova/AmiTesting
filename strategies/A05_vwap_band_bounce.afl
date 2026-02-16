@@ -20,9 +20,13 @@
 // Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
 
 // ---- Strategy Parameters ----
-entryBand = Param("Entry Band Sigma", 1, 1, 3, 1);
-sdBars    = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
-sdMult    = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+entryBand  = Param("Entry Band Sigma", 1, 1, 3, 1);
+vwapSigma1 = Param("VWAP Sigma 1", 1.0, 0.5, 2.0, 0.1);
+vwapSigma2 = Param("VWAP Sigma 2", 2.0, 1.0, 3.0, 0.1);
+vwapSigma3 = Param("VWAP Sigma 3", 3.0, 2.0, 4.0, 0.1);
+sdBars     = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult     = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -31,9 +35,9 @@ TimeFrameSet(in1Minute);
 sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- VWAP Clouds Indicator (from indicator library) ----
-vwStdev1 = 1.0;
-vwStdev2 = 2.0;
-vwStdev3 = 3.0;
+vwStdev1 = vwapSigma1;
+vwStdev2 = vwapSigma2;
+vwStdev3 = vwapSigma3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
 // ---- StdDev Exit Indicator (from indicator library) ----
@@ -93,7 +97,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -128,5 +132,7 @@ Title = Name() + " | A05 VWAP Band Bounce | Band=" + NumToStr(entryBand, 1.0) + 
         " | VWAP=" + NumToStr(vwap1m, 1.2) +
         " Upper=" + NumToStr(entryUpper1m, 1.2) +
         " Lower=" + NumToStr(entryLower1m, 1.2) +
+        " | Sig=" + NumToStr(vwapSigma1, 1.1) + "/" + NumToStr(vwapSigma2, 1.1) + "/" + NumToStr(vwapSigma3, 1.1) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts";

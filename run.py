@@ -33,6 +33,7 @@ from config.settings import (
     APX_OUTPUT,
     APX_TEMPLATE,
     RESULTS_DIR,
+    GCZ25_SYMBOL,
 )
 from scripts.afl_validator import validate_afl_file, auto_fix_afl
 from scripts.afl_parser import calculate_optimization_combos, inject_progress_tracker
@@ -47,6 +48,7 @@ from scripts.strategy_db import (
     get_latest_version,
     create_run,
     update_run,
+    store_optimization_combos,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +115,37 @@ def _parse_optimization_metrics(df) -> dict:
     return metrics
 
 
-def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) -> int:
+def _classify_optimization_columns(df) -> tuple[list[str], list[str]]:
+    """Classify DataFrame columns into parameter vs metric columns.
+
+    Uses the same keyword heuristic as app.py's ``_parse_optimization_results``.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        (param_columns, metric_columns)
+    """
+    metric_keywords = {
+        "net profit", "profit", "# trades", "all trades", "avg. profit",
+        "avg. bars", "drawdown", "max. trade", "winners", "losers",
+        "profit factor", "sharpe", "ulcer", "recovery", "payoff",
+        "cagr", "rar", "exposure", "risk", "% profitable",
+    }
+    metric_cols = []
+    param_cols = []
+    for col in df.columns:
+        cl = col.lower().strip()
+        if cl == "symbol":
+            continue
+        is_metric = any(kw in cl for kw in metric_keywords)
+        if is_metric:
+            metric_cols.append(col)
+        else:
+            param_cols.append(col)
+    return param_cols, metric_cols
+
+
+def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None) -> int:
     """Run the full backtest pipeline.
 
     Parameters
@@ -199,14 +231,18 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
         AFL_STRATEGY_FILE.write_text(actual_afl, encoding="utf-8")
         logger.info("Wrote version AFL to %s (%d chars)", AFL_STRATEGY_FILE, len(actual_afl))
 
+    effective_symbol = symbol or GCZ25_SYMBOL
+
     run_id = create_run(
         version_id=version_id,
         strategy_id=strategy_id,
         apx_file=str(APX_OUTPUT),
         afl_content=actual_afl,
         params_json=json.dumps({"run_mode": run_mode or 2}),
+        symbol=effective_symbol,
     )
     output_dir = RESULTS_DIR / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Run ID: %s", run_id)
     logger.info("Output dir: %s", output_dir)
 
@@ -286,19 +322,27 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
             periodicity = 0  # Tick
             logger.info("AFL uses TimeFrameSet — setting Periodicity=0 (Tick)")
 
+        # Use a unique APX filename per run.  AmiBroker caches the formula
+        # associated with an APX file across sessions; reusing the same
+        # filename (gcz25_test.apx) causes a "formula is different" dialog
+        # that blocks COM automation.  A fresh filename avoids this entirely.
+        run_apx_path = APX_OUTPUT.parent / f"run_{run_id}.apx"
         apx_path = build_apx(
             str(AFL_STRATEGY_FILE),
-            str(APX_OUTPUT),
+            str(run_apx_path),
             str(APX_TEMPLATE),
             run_id=run_id,
             periodicity=periodicity,
+            symbol=effective_symbol,
         )
         logger.info("APX file ready: %s", apx_path)
 
         # --- Step 2: Run OLE backtest --------------------------------------
         logger.info("Step 2 — Running OLE backtest ...")
         backtester = OLEBacktester()
-        result = backtester.run_full_test(output_dir=str(output_dir), run_mode=run_mode)
+        result = backtester.run_full_test(
+            apx_path=str(run_apx_path), output_dir=str(output_dir), run_mode=run_mode
+        )
         logger.info("Backtest completed.")
 
         # --- Step 3: Update run record -------------------------------------
@@ -308,6 +352,8 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
         if result:
             # Compute basic metrics from CSV for the run record
             metrics = {}
+            opt_columns_json = None
+            opt_total_combos = 0
             csv_path = output_dir / "results.csv"
             if csv_path.exists():
                 try:
@@ -319,6 +365,15 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
                         # with metric columns like "Net Profit", "# Trades", etc.
                         metrics = _parse_optimization_metrics(df)
                         trade_count = metrics.get("combos_tested", 0)
+                        opt_total_combos = trade_count
+                        opt_columns_json = json.dumps(list(df.columns))
+
+                        # Persist combo detail rows in SQL
+                        try:
+                            param_cols, metric_cols = _classify_optimization_columns(df)
+                            store_optimization_combos(run_id, df, param_cols, metric_cols)
+                        except Exception as exc:
+                            logger.warning("Failed to store optimization combos in SQL: %s", exc)
                     else:
                         profit_col = None
                         for col in df.columns:
@@ -354,14 +409,19 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
                         "may not be met in this data window."
                     )
 
-            update_run(
-                run_id,
+            update_kwargs = dict(
                 status="completed",
                 results_csv="results.csv",
                 results_html="results.html",
                 metrics_json=json.dumps(metrics),
                 completed_at=now,
             )
+            if is_optimization:
+                update_kwargs["is_optimization"] = 1
+                update_kwargs["total_combos"] = opt_total_combos
+                if opt_columns_json:
+                    update_kwargs["columns_json"] = opt_columns_json
+            update_run(run_id, **update_kwargs)
             if is_optimization:
                 logger.info("Run %s completed — %d optimization combos.", run_id, trade_count)
             else:
@@ -397,10 +457,30 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None) 
                    completed_at=datetime.now(timezone.utc).isoformat())
         return 1
 
+    finally:
+        # Clean up per-run APX file (the snapshot AFL is kept for reference).
+        try:
+            run_apx_path.unlink(missing_ok=True)
+        except (NameError, Exception):
+            pass
+
 
 if __name__ == "__main__":
-    # Support optional CLI arguments: run.py [strategy_id] [version_id] [run_mode]
-    sid = sys.argv[1] if len(sys.argv) > 1 else None
-    vid = sys.argv[2] if len(sys.argv) > 2 else None
-    run_mode = int(sys.argv[3]) if len(sys.argv) > 3 else None
-    sys.exit(main(strategy_id=sid, version_id=vid, run_mode=run_mode))
+    import argparse
+
+    parser = argparse.ArgumentParser(description="AmiTesting backtest pipeline")
+    parser.add_argument("--strategy-id", default=None)
+    parser.add_argument("--version-id", default=None)
+    parser.add_argument("--run-mode", type=int, default=None)
+    parser.add_argument("--symbol", default=None,
+                        help="Ticker symbol to backtest against")
+    # Support legacy positional args for backwards compatibility
+    parser.add_argument("legacy_args", nargs="*", default=[])
+    args = parser.parse_args()
+
+    # Fall back to positional args if named args not provided
+    sid = args.strategy_id or (args.legacy_args[0] if len(args.legacy_args) > 0 else None)
+    vid = args.version_id or (args.legacy_args[1] if len(args.legacy_args) > 1 else None)
+    rm = args.run_mode if args.run_mode is not None else (int(args.legacy_args[2]) if len(args.legacy_args) > 2 else None)
+
+    sys.exit(main(strategy_id=sid, version_id=vid, run_mode=rm, symbol=args.symbol))

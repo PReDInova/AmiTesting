@@ -192,6 +192,11 @@
     {% elif run.status == "running" %}
     <span class="badge bg-info small">Running</span>
     {% endif %}
+    {% if run and run.symbol %}
+    <span class="badge bg-light text-dark border">
+        <i class="bi bi-tag me-1"></i>{{ run.symbol }}
+    </span>
+    {% endif %}
     {% if run.completed_at %}
     <small class="text-muted">{{ run.completed_at[:19] }}</small>
     {% endif %}
@@ -365,8 +370,117 @@
         {% endif %}
     </div>
 
-    {# ── Right Column: Equity Curve + Metrics ─────────── #}
+    {# ── Right Column: Content depends on optimization vs backtest ── #}
     <div class="col-lg-7">
+
+    {% if is_optimization is defined and is_optimization %}
+        {# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+           OPTIMIZATION RESULTS — Summary Metrics
+           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+        {% if parsed and not parsed.error %}
+        {% set m = parsed.metrics %}
+        <div class="card workbench-card mb-3">
+            <div class="card-header py-2">
+                <span class="fw-semibold" style="font-size: 0.9rem;">
+                    <i class="bi bi-gear me-1"></i>Optimization Summary
+                </span>
+                <span class="badge bg-warning text-dark ms-2">Optimization</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    {% if m.combos_tested is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-blue">
+                            <div class="metric-value">{{ m.combos_tested }}</div>
+                            <div class="metric-label">Combos Tested</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if m.best_net_profit is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-green">
+                            <div class="metric-value {% if m.best_net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                ${{ "%.2f"|format(m.best_net_profit) }}
+                            </div>
+                            <div class="metric-label">Best Net Profit</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if m.worst_net_profit is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-red">
+                            <div class="metric-value text-danger">
+                                ${{ "%.2f"|format(m.worst_net_profit) }}
+                            </div>
+                            <div class="metric-label">Worst Net Profit</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if m.avg_net_profit is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-gray">
+                            <div class="metric-value {% if m.avg_net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                ${{ "%.2f"|format(m.avg_net_profit) }}
+                            </div>
+                            <div class="metric-label">Avg Net Profit</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if m.profitable_combos is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-green">
+                            <div class="metric-value text-success">
+                                {{ m.profitable_combos }}
+                                {% if m.combos_tested is defined and m.combos_tested > 0 %}
+                                <small class="text-muted" style="font-size: 0.7rem;">
+                                    ({{ "%.0f"|format(m.profitable_combos / m.combos_tested * 100) }}%)
+                                </small>
+                                {% endif %}
+                            </div>
+                            <div class="metric-label">Profitable Combos</div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if m.avg_trades is defined %}
+                    <div class="col-6 col-xl-3">
+                        <div class="metric-card-sm border-blue">
+                            <div class="metric-value">{{ m.avg_trades }}</div>
+                            <div class="metric-label">Avg Trades/Combo</div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {# ── Optimization Net Profit Distribution Chart ── #}
+        <div class="card workbench-card mb-3">
+            <div class="card-header py-2">
+                <span class="fw-semibold" style="font-size: 0.9rem;">
+                    <i class="bi bi-bar-chart me-1"></i>Net Profit Distribution
+                </span>
+            </div>
+            <div class="card-body">
+                <canvas id="optDistChart" style="max-height: 250px;"></canvas>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if parsed and parsed.error %}
+            <div class="alert alert-danger mt-3 mb-0" style="font-size: 0.85rem; white-space: pre-wrap;">
+                <i class="bi bi-exclamation-triangle me-1"></i>{{ parsed.error }}
+            </div>
+        {% endif %}
+
+    {% else %}
+        {# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+           BACKTEST RESULTS — Equity Curve + Metrics (original)
+           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
         {# ── Equity Curve Card ────────────────────────── #}
         <div class="card workbench-card mb-3">
             <div class="card-header d-flex align-items-center justify-content-between py-2">
@@ -540,17 +654,72 @@
         {% endif %}
 
         {% if parsed and parsed.error %}
-            <div class="alert alert-danger mt-3 mb-0" style="font-size: 0.85rem;">
+            <div class="alert alert-danger mt-3 mb-0" style="font-size: 0.85rem; white-space: pre-wrap;">
                 <i class="bi bi-exclamation-triangle me-1"></i>{{ parsed.error }}
             </div>
         {% endif %}
+    {% endif %}
     </div>
 </div>
 
 {# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   ROW 3 — Trade Table (Full Width, Collapsible)
+   ROW 3 — Results Table (Trade Log OR Optimization Combos)
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
 {% if parsed and parsed.trades %}
+
+{% if is_optimization is defined and is_optimization %}
+{# ── Optimization Results Table ──────────────────── #}
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between py-2"
+         data-bs-toggle="collapse" data-bs-target="#optTableBody" role="button"
+         aria-expanded="true" style="cursor: pointer;">
+        <span>
+            <i class="bi bi-table me-2"></i>Optimization Results
+            <span class="badge bg-warning text-dark ms-2">{{ parsed.trades|length }} combinations</span>
+        </span>
+        <i class="bi bi-chevron-down" style="font-size: 0.8rem;"></i>
+    </div>
+    <div class="collapse show" id="optTableBody">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-striped table-hover align-middle mb-0"
+                       id="optResultsTable" style="font-size: 0.82rem;">
+                    <thead class="table-light">
+                        <tr>
+                            <th class="text-muted" style="width: 40px;">#</th>
+                            {% for col in parsed.columns %}
+                            <th class="opt-sortable" data-col="{{ col }}" style="cursor: pointer; user-select: none;"
+                                title="Click to sort">
+                                {{ col }}
+                                <i class="bi bi-chevron-expand ms-1" style="font-size: 0.6rem; opacity: 0.4;"></i>
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% set net_col = parsed.metrics.get("net_profit_column", "") if parsed.metrics is defined and parsed.metrics is mapping else "" %}
+                        {% for combo in parsed.trades %}
+                        <tr {% if loop.index == 1 and net_col %}class="table-success"{% endif %}>
+                            <td class="text-muted">{{ loop.index }}</td>
+                            {% for col in parsed.columns %}
+                            <td {% if col == net_col %}
+                                    {% set nv = combo[col]|float(0) %}
+                                    class="fw-semibold {% if nv > 0 %}text-success{% elif nv < 0 %}text-danger{% endif %}"
+                                {% endif %}>
+                                {{ combo[col] }}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+{# ── Backtest Trade Table (original) ────────────── #}
 <div class="card mb-4">
     <div class="card-header d-flex align-items-center justify-content-between py-2"
          data-bs-toggle="collapse" data-bs-target="#tradeTableBody" role="button"
@@ -671,6 +840,8 @@
         </div>
     </div>
 </div>
+{% endif %}
+
 {% endif %}
 
 {# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -826,6 +997,43 @@
                     <span><strong>Exit:</strong> <span id="chartExitInfo">--</span></span>
                     <span><strong>P&amp;L:</strong> <span id="chartPnL">--</span></span>
                 </div>
+                {# Timeframe selector (Sprint 4) #}
+                <div class="px-3 py-1 border-bottom d-flex align-items-center gap-2" style="font-size: 0.8rem;">
+                    <span class="text-muted fw-semibold me-1">Timeframe:</span>
+                    <div class="btn-group btn-group-sm" role="group" id="tfSelector">
+                        <button type="button" class="btn btn-outline-secondary active" data-interval="60">1m</button>
+                        <button type="button" class="btn btn-outline-secondary" data-interval="300">5m</button>
+                        <button type="button" class="btn btn-outline-secondary" data-interval="600">10m</button>
+                        <button type="button" class="btn btn-outline-secondary" data-interval="86400">D</button>
+                    </div>
+                </div>
+                {# Indicator toggles (Sprint 4) #}
+                <div class="px-3 py-1 border-bottom d-flex align-items-center flex-wrap gap-2" style="font-size: 0.8rem;">
+                    <span class="text-muted fw-semibold me-1">Indicators:</span>
+                    <div class="d-flex gap-2 flex-wrap" id="indicatorToggles">
+                        <div class="form-check form-check-inline form-switch mb-0">
+                            <input class="form-check-input indicator-toggle" type="checkbox" id="indSMA"
+                                   data-type="sma" data-params='{"period": 20}'>
+                            <label class="form-check-label" for="indSMA" style="font-size: 0.78rem;">SMA(20)</label>
+                        </div>
+                        <div class="form-check form-check-inline form-switch mb-0">
+                            <input class="form-check-input indicator-toggle" type="checkbox" id="indEMA"
+                                   data-type="ema" data-params='{"period": 20}'>
+                            <label class="form-check-label" for="indEMA" style="font-size: 0.78rem;">EMA(20)</label>
+                        </div>
+                        <div class="form-check form-check-inline form-switch mb-0">
+                            <input class="form-check-input indicator-toggle" type="checkbox" id="indBBands"
+                                   data-type="bbands" data-params='{"period": 20, "std_dev": 2.0}'>
+                            <label class="form-check-label" for="indBBands" style="font-size: 0.78rem;">BBands(20,2)</label>
+                        </div>
+                    </div>
+                    {% if run %}
+                    <button class="btn btn-outline-primary btn-sm py-0 px-2 ms-auto" id="btnLoadPreset"
+                            style="font-size: 0.75rem;" title="Load indicators from strategy AFL">
+                        <i class="bi bi-magic me-1"></i>Strategy Preset
+                    </button>
+                    {% endif %}
+                </div>
                 {# Chart container #}
                 <div id="candlestickChartContainer">
                     <div class="chart-loading-overlay" id="chartLoading">
@@ -843,8 +1051,12 @@
                     </div>
                 </div>
             </div>
+            {# Run context for JS (Sprint 4) #}
+            {% if run %}
+            <div id="runContext" data-run-id="{{ run.id }}" data-version-id="{{ run.version_id }}" style="display:none;"></div>
+            {% endif %}
             <div class="modal-footer py-2">
-                <small class="text-muted me-auto">1-min candlestick data from AmiBroker database</small>
+                <small class="text-muted me-auto" id="chartIntervalLabel">1-min candlestick data from AmiBroker database</small>
                 <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
@@ -857,8 +1069,129 @@
 document.addEventListener('DOMContentLoaded', function() {
 
     /* ═══════════════════════════════════════════════════════
-       EQUITY CURVE — Dual-Mode Chart
+       OPTIMIZATION — Distribution Chart + Table Sort
        ═══════════════════════════════════════════════════════ */
+    {% if is_optimization is defined and is_optimization and parsed and parsed.trades %}
+    (function() {
+        // --- Net Profit Distribution Chart ---
+        var distCanvas = document.getElementById('optDistChart');
+        if (distCanvas) {
+            var profits = [];
+            var netProfitCol = {{ (parsed.metrics.get("net_profit_column", "")|tojson) }};
+            {% for combo in parsed.trades %}
+            {% if parsed.metrics.get("net_profit_column", "") %}
+            profits.push(parseFloat({{ combo[parsed.metrics.get("net_profit_column", "Net Profit")]|default(0)|tojson }}) || 0);
+            {% endif %}
+            {% endfor %}
+
+            if (profits.length > 0) {
+                // Build histogram bins
+                var minP = Math.min.apply(null, profits);
+                var maxP = Math.max.apply(null, profits);
+                var range = maxP - minP;
+                var binCount = Math.min(20, Math.max(5, Math.ceil(Math.sqrt(profits.length))));
+                var binSize = range / binCount || 1;
+                var bins = [];
+                var labels = [];
+                for (var b = 0; b < binCount; b++) {
+                    bins.push(0);
+                    var lo = minP + b * binSize;
+                    var hi = lo + binSize;
+                    labels.push('$' + Math.round(lo).toLocaleString());
+                }
+                profits.forEach(function(p) {
+                    var idx = Math.min(Math.floor((p - minP) / binSize), binCount - 1);
+                    if (idx < 0) idx = 0;
+                    bins[idx]++;
+                });
+
+                new Chart(distCanvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Combinations',
+                            data: bins,
+                            backgroundColor: bins.map(function(_, i) {
+                                var midVal = minP + (i + 0.5) * binSize;
+                                return midVal >= 0 ? 'rgba(25, 135, 84, 0.6)' : 'rgba(220, 53, 69, 0.6)';
+                            }),
+                            borderRadius: 3,
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: { display: true, text: 'Count', font: { size: 11 } },
+                                ticks: { stepSize: 1, font: { size: 10 } }
+                            },
+                            x: {
+                                title: { display: true, text: 'Net Profit', font: { size: 11 } },
+                                ticks: { font: { size: 9 }, maxRotation: 45 }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // --- Table Sorting ---
+        var optTable = document.getElementById('optResultsTable');
+        if (optTable) {
+            var sortDir = {};
+            optTable.querySelectorAll('.opt-sortable').forEach(function(th) {
+                th.addEventListener('click', function() {
+                    var col = this.dataset.col;
+                    var colIdx = Array.from(this.parentNode.children).indexOf(this);
+                    var tbody = optTable.querySelector('tbody');
+                    var rows = Array.from(tbody.querySelectorAll('tr'));
+
+                    sortDir[col] = sortDir[col] === 'asc' ? 'desc' : 'asc';
+                    var dir = sortDir[col];
+
+                    rows.sort(function(a, b) {
+                        var aVal = a.children[colIdx].textContent.trim();
+                        var bVal = b.children[colIdx].textContent.trim();
+                        var aNum = parseFloat(aVal);
+                        var bNum = parseFloat(bVal);
+                        if (!isNaN(aNum) && !isNaN(bNum)) {
+                            return dir === 'asc' ? aNum - bNum : bNum - aNum;
+                        }
+                        return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                    });
+
+                    // Re-number and re-append
+                    rows.forEach(function(row, i) {
+                        row.children[0].textContent = i + 1;
+                        // Highlight best row (first row when sorted by profit desc)
+                        row.classList.remove('table-success');
+                        tbody.appendChild(row);
+                    });
+                    if (dir === 'desc') {
+                        rows[0].classList.add('table-success');
+                    }
+
+                    // Update sort icons
+                    optTable.querySelectorAll('.opt-sortable i').forEach(function(icon) {
+                        icon.className = 'bi bi-chevron-expand ms-1';
+                        icon.style.opacity = '0.4';
+                    });
+                    var icon = this.querySelector('i');
+                    icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
+                    icon.style.opacity = '1';
+                });
+            });
+        }
+    })();
+    {% endif %}
+
+    /* ═══════════════════════════════════════════════════════
+       EQUITY CURVE — Dual-Mode Chart (backtest only)
+       ═══════════════════════════════════════════════════════ */
+    {% if not (is_optimization is defined and is_optimization) %}
     var chartInstance = null;
     var chartData = null;
     var canvasEl = document.getElementById('equityCurveChart');
@@ -871,8 +1204,9 @@ document.addEventListener('DOMContentLoaded', function() {
     var activitySection = document.getElementById('activitySection');
     var summarySection = document.getElementById('summarySection');
 
-    // Fetch equity curve data
-    fetch('/api/results/{{ filename }}/equity-curve')
+    // Fetch equity curve data — use run-specific API for GUID-based runs
+    var equityCurveUrl = {% if run %}'/api/run/{{ run.id }}/equity-curve'{% else %}'/api/results/{{ filename }}/equity-curve'{% endif %};
+    fetch(equityCurveUrl)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             document.getElementById('equityCurveLoading').style.display = 'none';
@@ -1115,6 +1449,8 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    {% endif %}{# end backtest-only equity curve block #}
+
     /* ═══════════════════════════════════════════════════════
        CODEMIRROR — AFL Editor Setup
        ═══════════════════════════════════════════════════════ */
@@ -1176,12 +1512,21 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    {% if not (is_optimization is defined and is_optimization) %}
     /* ═══════════════════════════════════════════════════════
-       CANDLESTICK CHART — Trade Click Handler (Sprint 3)
+       CANDLESTICK CHART — Sprint 3 + Sprint 4
+       Supports: timeframe switching, indicator overlays,
+                 strategy-linked presets
        ═══════════════════════════════════════════════════════ */
     var candlestickChart = null;
     var candlestickModal = null;
+    var currentTradeContext = null;
+    var currentInterval = 60;
 
+    var INTERVAL_LABELS = {60: '1-min', 300: '5-min', 600: '10-min', 86400: 'Daily'};
+    var INDICATOR_COLORS = ['#FF6D00', '#2979FF', '#00E676', '#D500F9', '#FF1744', '#00BCD4'];
+
+    // --- Trade row click handler ---
     document.querySelectorAll('.trade-row-clickable').forEach(function(row) {
         row.addEventListener('click', function(e) {
             if (e.target.closest('a, button')) return;
@@ -1201,14 +1546,66 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // --- Timeframe selector ---
+    document.querySelectorAll('#tfSelector .btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var interval = parseInt(this.dataset.interval);
+            currentInterval = interval;
+            document.querySelectorAll('#tfSelector .btn').forEach(function(b) { b.classList.remove('active'); });
+            this.classList.add('active');
+            loadChartData(interval);
+        });
+    });
+
+    // --- Indicator toggle handlers ---
+    document.querySelectorAll('.indicator-toggle').forEach(function(toggle) {
+        toggle.addEventListener('change', function() {
+            loadChartData(currentInterval);
+        });
+    });
+
+    // --- Strategy Preset button ---
+    var btnPreset = document.getElementById('btnLoadPreset');
+    var runCtx = document.getElementById('runContext');
+    if (btnPreset && runCtx && runCtx.dataset.runId) {
+        btnPreset.addEventListener('click', function() {
+            fetch('/api/run/' + runCtx.dataset.runId + '/indicators')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.indicators && data.indicators.length > 0) {
+                        applyIndicatorPreset(data.indicators);
+                    }
+                })
+                .catch(function(err) {
+                    console.error('Failed to load strategy presets:', err);
+                });
+        });
+    }
+
+    function getActiveIndicators() {
+        var indicators = [];
+        document.querySelectorAll('.indicator-toggle:checked').forEach(function(el) {
+            indicators.push({
+                type: el.dataset.type,
+                params: JSON.parse(el.dataset.params)
+            });
+        });
+        return indicators;
+    }
+
     function showCandlestickChart(symbol, entryDate, exitDate, entryPrice, exitPrice, tradeType, tradeIndex, profit) {
+        currentTradeContext = {
+            symbol: symbol, entryDate: entryDate, exitDate: exitDate,
+            entryPrice: entryPrice, exitPrice: exitPrice,
+            tradeType: tradeType, tradeIndex: tradeIndex, profit: profit
+        };
+        currentInterval = 60;
+
         if (!candlestickModal) {
             candlestickModal = new bootstrap.Modal(document.getElementById('candlestickModal'));
         }
 
         // Reset UI
-        document.getElementById('chartLoading').style.display = 'flex';
-        document.getElementById('chartError').classList.add('d-none');
         document.getElementById('chartTradeTitle').textContent = symbol + ' \u2014 Trade #' + tradeIndex;
         document.getElementById('chartDirection').textContent = tradeType;
         document.getElementById('chartEntryInfo').textContent = entryPrice.toFixed(1) + ' @ ' + entryDate;
@@ -1218,27 +1615,51 @@ document.addEventListener('DOMContentLoaded', function() {
         pnlEl.textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2);
         pnlEl.className = profit >= 0 ? 'text-success fw-bold' : 'text-danger fw-bold';
 
-        // Destroy previous chart
+        // Reset TF buttons to 1m
+        document.querySelectorAll('#tfSelector .btn').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.interval === '60');
+        });
+
+        candlestickModal.show();
+        loadChartData(60);
+    }
+
+    function loadChartData(interval) {
+        var ctx = currentTradeContext;
+        if (!ctx) return;
+
+        // Prepare loading state
         var container = document.getElementById('candlestickChartContainer');
         if (candlestickChart) {
             candlestickChart.remove();
             candlestickChart = null;
         }
-        // Clear container and re-add loading overlay
         var loadingEl = document.getElementById('chartLoading');
         container.innerHTML = '';
         container.appendChild(loadingEl);
         loadingEl.style.display = 'flex';
+        document.getElementById('chartError').classList.add('d-none');
 
-        candlestickModal.show();
+        // Update footer label
+        document.getElementById('chartIntervalLabel').textContent =
+            (INTERVAL_LABELS[interval] || interval + 's') + ' candlestick data from AmiBroker database';
 
-        // Fetch OHLCV data
-        var url = '/api/ohlcv/' + encodeURIComponent(symbol)
-            + '?entry_date=' + encodeURIComponent(entryDate)
-            + '&exit_date=' + encodeURIComponent(exitDate);
+        // Build URL
+        var activeIndicators = getActiveIndicators();
+        var url = '/api/ohlcv/' + encodeURIComponent(ctx.symbol)
+            + '?entry_date=' + encodeURIComponent(ctx.entryDate)
+            + '&exit_date=' + encodeURIComponent(ctx.exitDate)
+            + '&interval=' + interval;
+
+        if (activeIndicators.length > 0) {
+            url += '&indicators=' + encodeURIComponent(JSON.stringify(activeIndicators));
+        }
 
         fetch(url)
-            .then(function(r) { return r.json(); })
+            .then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error('Server error (' + r.status + ')'); });
+                return r.json();
+            })
             .then(function(data) {
                 loadingEl.style.display = 'none';
 
@@ -1254,7 +1675,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                renderCandlestickChart(container, data.data, entryDate, exitDate, entryPrice, exitPrice, tradeType);
+                renderCandlestickChart(container, data.data, ctx.entryDate, ctx.exitDate,
+                                       ctx.entryPrice, ctx.exitPrice, ctx.tradeType,
+                                       data.indicators || []);
             })
             .catch(function(err) {
                 loadingEl.style.display = 'none';
@@ -1263,7 +1686,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    function renderCandlestickChart(container, bars, entryDate, exitDate, entryPrice, exitPrice, tradeType) {
+    function renderCandlestickChart(container, bars, entryDate, exitDate, entryPrice, exitPrice, tradeType, indicators) {
         candlestickChart = LightweightCharts.createChart(container, {
             width: container.clientWidth,
             height: 400,
@@ -1314,6 +1737,50 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         volumeSeries.setData(volumeData);
 
+        // --- Indicator overlays (Sprint 4) ---
+        var colorIdx = 0;
+        if (indicators && indicators.length > 0) {
+            indicators.forEach(function(ind) {
+                if (ind.error) return;
+
+                if (ind.type === 'bbands' && ind.series) {
+                    // Bollinger Bands: 3 lines
+                    var upperSeries = candlestickChart.addLineSeries({
+                        color: 'rgba(41, 121, 255, 0.5)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        title: 'BB Upper',
+                    });
+                    upperSeries.setData(ind.series.upper);
+
+                    var middleSeries = candlestickChart.addLineSeries({
+                        color: 'rgba(41, 121, 255, 0.8)',
+                        lineWidth: 1,
+                        title: 'BB Mid',
+                    });
+                    middleSeries.setData(ind.series.middle);
+
+                    var lowerSeries = candlestickChart.addLineSeries({
+                        color: 'rgba(41, 121, 255, 0.5)',
+                        lineWidth: 1,
+                        lineStyle: 2,
+                        title: 'BB Lower',
+                    });
+                    lowerSeries.setData(ind.series.lower);
+                } else if (ind.data) {
+                    // Single-line indicator (SMA, EMA)
+                    var color = INDICATOR_COLORS[colorIdx % INDICATOR_COLORS.length];
+                    colorIdx++;
+                    var lineSeries = candlestickChart.addLineSeries({
+                        color: color,
+                        lineWidth: 2,
+                        title: ind.label || ind.type,
+                    });
+                    lineSeries.setData(ind.data);
+                }
+            });
+        }
+
         // Entry / exit markers
         var markers = [];
         var entryTime = findClosestBarTime(bars, entryDate);
@@ -1358,7 +1825,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function findClosestBarTime(bars, dateStr) {
-        // Parse the date string (format: "7/21/2025 1:14:50 AM")
         var targetDate = new Date(dateStr);
         if (isNaN(targetDate.getTime())) return null;
 
@@ -1376,6 +1842,56 @@ document.addEventListener('DOMContentLoaded', function() {
         return closest;
     }
 
+    // --- Strategy Preset: apply indicator configs from AFL ---
+    function applyIndicatorPreset(presetIndicators) {
+        // Uncheck all current toggles
+        document.querySelectorAll('.indicator-toggle').forEach(function(el) {
+            el.checked = false;
+        });
+
+        presetIndicators.forEach(function(preset) {
+            var found = false;
+            document.querySelectorAll('.indicator-toggle').forEach(function(el) {
+                if (el.dataset.type === preset.type && !found) {
+                    el.dataset.params = JSON.stringify(preset.params);
+                    el.checked = true;
+                    var label = el.nextElementSibling;
+                    if (label) {
+                        label.textContent = preset.type.toUpperCase() + '(' +
+                            Object.values(preset.params).join(', ') + ')';
+                    }
+                    found = true;
+                }
+            });
+
+            if (!found) {
+                addDynamicIndicatorToggle(preset);
+            }
+        });
+
+        loadChartData(currentInterval);
+    }
+
+    function addDynamicIndicatorToggle(preset) {
+        var container = document.getElementById('indicatorToggles');
+        var id = 'indDyn_' + preset.type + '_' + Math.random().toString(36).substr(2, 5);
+        var paramStr = Object.values(preset.params).join(', ');
+        var div = document.createElement('div');
+        div.className = 'form-check form-check-inline form-switch mb-0';
+        div.innerHTML = '<input class="form-check-input indicator-toggle" type="checkbox" checked ' +
+            'id="' + id + '" data-type="' + preset.type + '" ' +
+            "data-params='" + JSON.stringify(preset.params) + "'>" +
+            '<label class="form-check-label" for="' + id + '" style="font-size: 0.78rem;">' +
+            preset.type.toUpperCase() + '(' + paramStr + ')</label>';
+        container.appendChild(div);
+
+        div.querySelector('.indicator-toggle').addEventListener('change', function() {
+            loadChartData(currentInterval);
+        });
+    }
+
+
+    {% endif %}{# end backtest-only candlestick chart block #}
 
     /* ═══════════════════════════════════════════════════════
        VERSION PREVIEW — Modal Fetch

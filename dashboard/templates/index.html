@@ -23,7 +23,7 @@
 <!-- ── Quick Actions ───────────────────────────────────── -->
 <div class="row g-3 mb-5">
     <!-- Edit Strategy -->
-    <div class="col-md-4">
+    <div class="col">
         <a href="/afl" class="card action-card h-100 text-decoration-none">
             <div class="card-body">
                 <div class="action-icon"><i class="bi bi-code-slash"></i></div>
@@ -33,8 +33,19 @@
         </a>
     </div>
 
+    <!-- Indicator Library -->
+    <div class="col">
+        <a href="/indicators" class="card action-card h-100 text-decoration-none">
+            <div class="card-body">
+                <div class="action-icon"><i class="bi bi-puzzle"></i></div>
+                <h6>Indicator Library</h6>
+                <p class="text-muted small mb-0">Manage reusable AFL indicators</p>
+            </div>
+        </a>
+    </div>
+
     <!-- Run Backtest -->
-    <div class="col-md-4">
+    <div class="col">
         <div class="card action-card h-100">
             <div class="card-body">
                 <div class="action-icon"><i class="bi bi-play-circle"></i></div>
@@ -51,7 +62,7 @@
     </div>
 
     <!-- View Logs -->
-    <div class="col-md-4">
+    <div class="col">
         <a href="/logs" class="card action-card h-100 text-decoration-none">
             <div class="card-body">
                 <div class="action-icon"><i class="bi bi-journal-text"></i></div>
@@ -60,6 +71,27 @@
             </div>
         </a>
     </div>
+
+    <!-- Batch Operations -->
+    <div class="col">
+        <div class="card action-card h-100">
+            <div class="card-body">
+                <div class="action-icon"><i class="bi bi-collection-play"></i></div>
+                <h6>Batch Backtest</h6>
+                <p class="text-muted small mb-2">Run all strategies at once</p>
+                <div class="d-flex gap-1 justify-content-center">
+                    <button type="button" class="btn btn-primary btn-sm px-3" id="batchRunBtn"
+                        onclick="startBatchBacktest()"
+                        {% if not db_configured %}disabled title="Configure AmiBroker database first"{% endif %}>
+                        <i class="bi bi-play-fill me-1"></i>Run All
+                    </button>
+                    <a href="/batch/history" class="btn btn-outline-secondary btn-sm" title="Batch history">
+                        <i class="bi bi-clock-history"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- ── Strategies Section ─────────────────────────────── -->
@@ -67,7 +99,7 @@
     <h4 class="fw-bold mb-0">Strategies</h4>
     <div class="d-flex gap-2 align-items-center">
         {% if strategies %}
-        <span class="badge bg-secondary">{{ strategies|length }} strateg{{ 'y' if strategies|length == 1 else 'ies' }}</span>
+        <span class="badge bg-secondary" id="strategyCount">{{ strategies|length }} strateg{{ 'y' if strategies|length == 1 else 'ies' }}</span>
         {% endif %}
         <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#newStrategyModal">
             <i class="bi bi-plus-lg me-1"></i>New Strategy
@@ -75,20 +107,64 @@
     </div>
 </div>
 
-{% if not strategies %}
-<div class="card mb-5">
-    <div class="card-body text-center py-5">
-        <i class="bi bi-lightbulb text-muted" style="font-size: 3rem;"></i>
-        <p class="text-muted mt-3 mb-2">No strategies yet.</p>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newStrategyModal">
-            <i class="bi bi-plus-lg me-1"></i>Create your first strategy
+{% if strategies %}
+<!-- ── Toolbar: Search + View Toggle ──────────────────── -->
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <!-- Search input -->
+    <div class="input-group" style="max-width: 320px;">
+        <span class="input-group-text bg-white border-end-0"><i class="bi bi-search"></i></span>
+        <input type="text" class="form-control border-start-0" id="strategySearch"
+               placeholder="Search strategies..." autocomplete="off">
+    </div>
+
+    <!-- Indicator filter dropdown -->
+    {% if all_indicators %}
+    <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                id="indicatorFilterBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+            <i class="bi bi-funnel me-1"></i>Filter by Indicator
+        </button>
+        <div class="dropdown-menu p-2" style="min-width: 220px; max-height: 320px; overflow-y: auto;">
+            <div class="mb-2">
+                <button class="btn btn-sm btn-link text-decoration-none p-0" onclick="clearIndicatorFilters()">Clear all</button>
+            </div>
+            {% for ind in all_indicators %}
+            <div class="form-check">
+                <input class="form-check-input indicator-filter-cb" type="checkbox"
+                       value="{{ ind }}" id="indFilter_{{ loop.index }}">
+                <label class="form-check-label small" for="indFilter_{{ loop.index }}">{{ ind }}</label>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Active filter pills -->
+    <div id="activeFilters" class="d-flex flex-wrap gap-1"></div>
+
+    <!-- Spacer -->
+    <div class="ms-auto"></div>
+
+    <!-- View toggle -->
+    <div class="btn-group btn-group-sm" role="group">
+        <button type="button" class="btn btn-outline-secondary active" id="btnCardView"
+                onclick="setView('card')" title="Card view">
+            <i class="bi bi-grid-3x3-gap-fill"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary" id="btnTableView"
+                onclick="setView('table')" title="Table view">
+            <i class="bi bi-list-ul"></i>
         </button>
     </div>
 </div>
-{% else %}
-<div class="row g-3 mb-5">
+
+<!-- ── Card View ──────────────────────────────────────── -->
+<div class="row g-3 mb-5" id="cardView">
     {% for s in strategies %}
-    <div class="col-md-6 col-lg-4">
+    <div class="col-md-6 col-lg-4 strategy-item"
+         data-name="{{ s.name|lower }}"
+         data-summary="{{ (s.summary or '')|lower }}"
+         data-indicators="{{ s.indicators|join(',') }}">
         <div class="card h-100">
             <div class="card-body d-flex flex-column">
                 <div class="d-flex align-items-start justify-content-between mb-2">
@@ -119,14 +195,27 @@
                 <p class="text-muted small mb-2">{{ s.summary|truncate(120) }}</p>
                 {% endif %}
 
-                <div class="d-flex gap-2 mb-2">
+                <div class="d-flex flex-wrap gap-1 mb-2">
                     <span class="badge bg-light text-dark border">
                         <i class="bi bi-layers me-1"></i>{{ s.version_count }} version{{ 's' if s.version_count != 1 }}
                     </span>
                     <span class="badge bg-light text-dark border">
                         <i class="bi bi-play-circle me-1"></i>{{ s.run_count }} run{{ 's' if s.run_count != 1 }}
                     </span>
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-sliders me-1"></i>{{ s.param_count|default(0) }} param{{ 's' if s.param_count|default(0) != 1 }}
+                    </span>
                 </div>
+
+                {% if s.indicators %}
+                <div class="d-flex flex-wrap gap-1 mb-2">
+                    {% for ind in s.indicators %}
+                    <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 indicator-tag"
+                          style="font-size: 0.7rem; cursor: pointer;"
+                          onclick="toggleIndicatorFilter('{{ ind }}')">{{ ind }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
 
                 {% if s.latest_run and s.latest_run.metrics %}
                     {% set m = s.latest_run.metrics %}
@@ -158,6 +247,152 @@
                 </div>
             </div>
         </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- ── Table View (hidden by default) ─────────────────── -->
+<div class="mb-5" id="tableView" style="display: none;">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Indicators</th>
+                    <th>Params</th>
+                    <th>Versions</th>
+                    <th>Runs</th>
+                    <th>Latest Status</th>
+                    <th>Latest Metrics</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in strategies %}
+                <tr class="strategy-item"
+                    data-name="{{ s.name|lower }}"
+                    data-summary="{{ (s.summary or '')|lower }}"
+                    data-indicators="{{ s.indicators|join(',') }}">
+                    <td>
+                        <a href="/strategy/{{ s.id }}" class="text-decoration-none fw-bold">{{ s.name }}</a>
+                        {% if s.summary %}
+                        <br><small class="text-muted">{{ s.summary|truncate(80) }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% for ind in s.indicators %}
+                        <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25 indicator-tag"
+                              style="font-size: 0.68rem; cursor: pointer;"
+                              onclick="toggleIndicatorFilter('{{ ind }}')">{{ ind }}</span>
+                        {% endfor %}
+                    </td>
+                    <td><span class="badge bg-light text-dark border">{{ s.param_count|default(0) }}</span></td>
+                    <td>{{ s.version_count }}</td>
+                    <td>{{ s.run_count }}</td>
+                    <td>
+                        {% if s.latest_run %}
+                            {% if s.latest_run.status == "completed" %}
+                            <span class="badge bg-success">Completed</span>
+                            {% elif s.latest_run.status == "running" %}
+                            <span class="badge bg-info">Running</span>
+                            {% elif s.latest_run.status == "failed" %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ s.latest_run.status|title }}</span>
+                            {% endif %}
+                        {% else %}
+                        <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if s.latest_run and s.latest_run.metrics %}
+                            {% set m = s.latest_run.metrics %}
+                            {% if m.total_trades is defined %}
+                            <small>{{ m.total_trades }} trades
+                            {% if m.total_profit is defined %}, ${{ "%.2f"|format(m.total_profit) }}{% endif %}
+                            {% if m.win_rate is defined %}<br>{{ m.win_rate }}% win{% endif %}
+                            </small>
+                            {% else %}
+                            <small class="text-muted">--</small>
+                            {% endif %}
+                        {% else %}
+                        <small class="text-muted">--</small>
+                        {% endif %}
+                    </td>
+                    <td><small class="text-muted">{{ s.updated_at[:10] if s.updated_at else 'N/A' }}</small></td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            {% if s.latest_run %}
+                            <a href="/run/{{ s.latest_run.id }}" class="btn btn-sm btn-outline-secondary" title="View latest run">
+                                <i class="bi bi-graph-up"></i>
+                            </a>
+                            {% endif %}
+                            <a href="/strategy/{{ s.id }}" class="btn btn-sm btn-outline-primary" title="Details">
+                                <i class="bi bi-arrow-right"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ── No Results Message ─────────────────────────────── -->
+<div class="card mb-5" id="noResults" style="display: none;">
+    <div class="card-body text-center py-4">
+        <i class="bi bi-search text-muted" style="font-size: 2rem;"></i>
+        <p class="text-muted mt-2 mb-0">No strategies match your search.</p>
+    </div>
+</div>
+
+{% else %}
+<div class="card mb-5">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-lightbulb text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3 mb-2">No strategies yet.</p>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newStrategyModal">
+            <i class="bi bi-plus-lg me-1"></i>Create your first strategy
+        </button>
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Recent Batch Runs ──────────────────────────────── -->
+{% if batches %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Recent Batch Runs</h4>
+    <a href="/batch/history" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-clock-history me-1"></i>View All
+    </a>
+</div>
+<div class="row g-3 mb-5">
+    {% for b in batches[:3] %}
+    <div class="col-md-4">
+        <a href="/batch/{{ b.id }}" class="card h-100 text-decoration-none" style="color: inherit;">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <h6 class="fw-bold mb-0">{{ b.name or b.id[:12] }}</h6>
+                    {% if b.status == "running" %}
+                    <span class="badge bg-info"><span class="spinner-border spinner-border-sm me-1"></span>Running</span>
+                    {% elif b.status == "completed" %}
+                    <span class="badge bg-success">Completed</span>
+                    {% elif b.status == "cancelled" %}
+                    <span class="badge bg-warning text-dark">Cancelled</span>
+                    {% else %}
+                    <span class="badge bg-secondary">{{ b.status|title }}</span>
+                    {% endif %}
+                </div>
+                <div class="small text-muted">
+                    <span class="text-success fw-bold">{{ b.completed_count }}</span> completed
+                    {% if b.failed_count > 0 %}, <span class="text-danger fw-bold">{{ b.failed_count }}</span> failed{% endif %}
+                    / {{ b.total_count }} total
+                </div>
+                <small class="text-muted">{{ b.created_at[:16] if b.created_at else '' }}</small>
+            </div>
+        </a>
     </div>
     {% endfor %}
 </div>
@@ -226,4 +461,190 @@
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// -- Batch backtest launch --
+function startBatchBacktest() {
+    var btn = document.getElementById('batchRunBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Starting...';
+    }
+    fetch('/api/batch/backtest', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.batch_id) {
+            window.location.href = '/batch/' + data.batch_id;
+        } else {
+            alert(data.error || 'Failed to start batch');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run All';
+            }
+        }
+    })
+    .catch(function(err) {
+        alert('Error: ' + err);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Run All';
+        }
+    });
+}
+</script>
+<script>
+(function() {
+    const searchInput = document.getElementById('strategySearch');
+    const cardView = document.getElementById('cardView');
+    const tableView = document.getElementById('tableView');
+    const btnCard = document.getElementById('btnCardView');
+    const btnTable = document.getElementById('btnTableView');
+    const noResults = document.getElementById('noResults');
+    const countBadge = document.getElementById('strategyCount');
+    const activeFiltersEl = document.getElementById('activeFilters');
+
+    if (!searchInput) return;  // no strategies on page
+
+    let currentView = localStorage.getItem('strategyView') || 'card';
+    let activeIndicatorFilters = new Set();
+    const totalCount = {{ strategies|length }};
+
+    // ── View Toggle ──────────────────────────────────────
+    function setViewInternal(view) {
+        currentView = view;
+        localStorage.setItem('strategyView', view);
+        if (view === 'card') {
+            cardView.style.display = '';
+            tableView.style.display = 'none';
+            btnCard.classList.add('active');
+            btnTable.classList.remove('active');
+        } else {
+            cardView.style.display = 'none';
+            tableView.style.display = '';
+            btnTable.classList.add('active');
+            btnCard.classList.remove('active');
+        }
+    }
+
+    // Initialize view from localStorage
+    setViewInternal(currentView);
+
+    // Expose to onclick handlers
+    window.setView = setViewInternal;
+
+    // ── Filtering Logic ──────────────────────────────────
+    function applyFilters() {
+        const query = searchInput.value.toLowerCase().trim();
+        const items = document.querySelectorAll('.strategy-item');
+        let visible = 0;
+
+        items.forEach(function(el) {
+            const name = el.getAttribute('data-name') || '';
+            const summary = el.getAttribute('data-summary') || '';
+            const indicators = el.getAttribute('data-indicators') || '';
+
+            // Text search matches name, summary, or indicator names
+            const matchesSearch = !query ||
+                name.includes(query) ||
+                summary.includes(query) ||
+                indicators.toLowerCase().includes(query);
+
+            // Indicator filter: item must have ALL selected indicators
+            let matchesIndicators = true;
+            if (activeIndicatorFilters.size > 0) {
+                const itemIndicators = indicators ? indicators.split(',') : [];
+                for (const req of activeIndicatorFilters) {
+                    if (!itemIndicators.includes(req)) {
+                        matchesIndicators = false;
+                        break;
+                    }
+                }
+            }
+
+            const show = matchesSearch && matchesIndicators;
+            el.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        // Show/hide no-results message
+        if (noResults) {
+            noResults.style.display = (visible === 0 && totalCount > 0) ? '' : 'none';
+        }
+
+        // Update count badge
+        if (countBadge) {
+            if (visible === totalCount) {
+                countBadge.textContent = totalCount + ' strateg' + (totalCount === 1 ? 'y' : 'ies');
+            } else {
+                countBadge.textContent = visible + ' of ' + totalCount + ' shown';
+            }
+        }
+
+        renderActiveFilters();
+    }
+
+    function renderActiveFilters() {
+        if (!activeFiltersEl) return;
+        activeFiltersEl.innerHTML = '';
+        activeIndicatorFilters.forEach(function(ind) {
+            const pill = document.createElement('span');
+            pill.className = 'badge bg-info text-white d-flex align-items-center gap-1';
+            pill.style.fontSize = '0.75rem';
+            pill.innerHTML = ind + ' <i class="bi bi-x-lg" style="cursor:pointer; font-size:0.6rem;"></i>';
+            pill.querySelector('i').addEventListener('click', function() {
+                activeIndicatorFilters.delete(ind);
+                // Uncheck the corresponding checkbox
+                document.querySelectorAll('.indicator-filter-cb').forEach(function(cb) {
+                    if (cb.value === ind) cb.checked = false;
+                });
+                applyFilters();
+            });
+            activeFiltersEl.appendChild(pill);
+        });
+    }
+
+    // ── Event Listeners ──────────────────────────────────
+    searchInput.addEventListener('input', applyFilters);
+
+    // Indicator checkbox filters
+    document.querySelectorAll('.indicator-filter-cb').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            if (this.checked) {
+                activeIndicatorFilters.add(this.value);
+            } else {
+                activeIndicatorFilters.delete(this.value);
+            }
+            applyFilters();
+        });
+    });
+
+    // Click indicator tag to toggle filter
+    window.toggleIndicatorFilter = function(ind) {
+        if (activeIndicatorFilters.has(ind)) {
+            activeIndicatorFilters.delete(ind);
+        } else {
+            activeIndicatorFilters.add(ind);
+        }
+        // Sync checkboxes
+        document.querySelectorAll('.indicator-filter-cb').forEach(function(cb) {
+            cb.checked = activeIndicatorFilters.has(cb.value);
+        });
+        applyFilters();
+    };
+
+    window.clearIndicatorFilters = function() {
+        activeIndicatorFilters.clear();
+        document.querySelectorAll('.indicator-filter-cb').forEach(function(cb) {
+            cb.checked = false;
+        });
+        applyFilters();
+    };
+})();
+</script>
 {% endblock %}

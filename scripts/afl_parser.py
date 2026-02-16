@@ -92,11 +92,11 @@ _INCLUDE_TO_INDICATOR = {
     "adx.afl": "adx",
     "consolidation_zones.afl": "donchian",
     "range_bound.afl": "donchian",
+    "derivative_lookback.afl": "derivative",
 }
 
 # Files to skip (not chart indicators or too complex)
 _INCLUDE_SKIP = {
-    "derivative_lookback.afl",
     "market_sessions.afl",
     "consolidation_normwidth.afl",
 }
@@ -118,6 +118,7 @@ _INDICATOR_OVERLAY = {
     "tema": True, "vwap": True, "bbands": True, "donchian": True,
     "sma": True, "ema": True, "stdev_bands": True,
     "adx": False, "rsi": False, "stochastic": False, "atr": False,
+    "derivative": False,
 }
 
 _INDICATOR_COLOR = {
@@ -132,6 +133,7 @@ _INDICATOR_COLOR = {
     "sma": "#FF6D00",
     "ema": "#00E676",
     "atr": "#FF9100",
+    "derivative": "#FF5722",
 }
 
 # Param name keyword rules -> (indicator_type, param_key)
@@ -160,6 +162,8 @@ _PARAM_RULES = [
     ([("stddev", "stdev"), ("mult",)], "stdev_bands", "multiplier"),
     # ATR
     ([("atr",), ("period",)], "atr", "period"),
+    # Derivative
+    ([("deriv",), ("lookback",)], "derivative", "lookback"),
 ]
 
 
@@ -520,7 +524,8 @@ _OPTIMIZE_RE = re.compile(
 )
 
 _PROGRESS_AFL_TEMPLATE = r"""// ==== AmiTesting Optimization Progress Tracker ====
-if (Status("action") == actionOptimize)
+// Status("action"): 1=backtest, 2=scan, 3=explore, 4=optimize
+if (Status("action") == 4)
 {{
     if (BarIndex() == BarCount - 1)
     {{

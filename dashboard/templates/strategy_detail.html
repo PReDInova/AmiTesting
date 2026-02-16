@@ -2,6 +2,64 @@
 
 {% block title %}{{ strategy.name }} — AmiTesting{% endblock %}
 
+{% block extra_head %}
+<style>
+    .sp-info-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        border: 1px solid #adb5bd;
+        background: transparent;
+        color: #6c757d;
+        font-size: 0.58rem;
+        font-weight: 700;
+        font-style: italic;
+        font-family: Georgia, serif;
+        cursor: pointer;
+        padding: 0;
+        margin-left: 3px;
+        line-height: 1;
+        vertical-align: middle;
+    }
+    .sp-info-btn:hover {
+        background: #e9ecef;
+        border-color: #6c757d;
+        color: #495057;
+    }
+    .popover.param-info-pop {
+        max-width: 340px;
+        font-size: 0.78rem;
+    }
+    .popover.param-info-pop .popover-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.4rem 0.65rem;
+    }
+    .popover.param-info-pop .pi-close {
+        background: none; border: none;
+        font-size: 1rem; line-height: 1;
+        color: #6c757d; cursor: pointer;
+        padding: 0 0 0 0.5rem;
+    }
+    .popover.param-info-pop .pi-close:hover { color: #000; }
+    .popover.param-info-pop .popover-body {
+        padding: 0.6rem 0.75rem;
+    }
+    .pi-section { margin-bottom: 0.4rem; }
+    .pi-section:last-child { margin-bottom: 0; }
+    .pi-section-label {
+        font-weight: 700;
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: #6c757d;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- ── Breadcrumb ──────────────────────────────────────── -->
 <nav aria-label="breadcrumb" class="mb-3">
@@ -25,6 +83,9 @@
         {% endif %}
     </div>
     <div class="d-flex gap-2">
+        <a href="/strategy/{{ strategy.id }}/explore" class="btn btn-outline-info">
+            <i class="bi bi-graph-up me-1"></i>Explore Indicators
+        </a>
         <form method="POST" action="/backtest/run">
             <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
             <button type="submit" class="btn btn-success"
@@ -58,6 +119,54 @@
     <div>
         <strong>Risk Notes</strong><br>
         {{ strategy.risk_notes }}
+    </div>
+</div>
+{% endif %}
+
+<!-- ── Parameters Panel ──────────────────────────────── -->
+{% if params %}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="fw-bold mb-0"><i class="bi bi-sliders me-2"></i>Parameters ({{ params|length }})</h6>
+        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#editRunModal">
+            <i class="bi bi-pencil-square me-1"></i>Edit & Run
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Parameter</th>
+                    <th class="text-end">Default</th>
+                    <th class="text-end">Min</th>
+                    <th class="text-end">Max</th>
+                    <th class="text-end">Step</th>
+                    <th>Type</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in params %}
+                <tr>
+                    <td>
+                        <code>{{ p.name }}</code>
+                        <button type="button" class="sp-info-btn d-none"
+                                data-param-info="{{ p.name }}" tabindex="-1">i</button>
+                    </td>
+                    <td class="text-end">{{ p.default }}</td>
+                    <td class="text-end text-muted">{{ p.min }}</td>
+                    <td class="text-end text-muted">{{ p.max }}</td>
+                    <td class="text-end text-muted">{{ p.step }}</td>
+                    <td>
+                        {% if p.type == "optimize" %}
+                        <span class="badge bg-warning text-dark">Optimize</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Param</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
@@ -147,7 +256,9 @@
                 <th>Run ID</th>
                 <th>Version</th>
                 <th>Status</th>
+                <th>Symbol</th>
                 <th>Metrics</th>
+                <th>Parameters</th>
                 <th>Started</th>
                 <th>Actions</th>
             </tr>
@@ -165,6 +276,7 @@
                     {% endif %}
                 </td>
                 <td>
+                    {% set is_opt_run = (r.run_params is defined and r.run_params is mapping and r.run_params.get("run_mode") == 4) or (r.metrics is defined and r.metrics is mapping and r.metrics.get("run_mode") == 4) %}
                     {% if r.status == "completed" %}
                     <span class="badge bg-success">Completed</span>
                     {% elif r.status == "running" %}
@@ -174,16 +286,46 @@
                     {% else %}
                     <span class="badge bg-secondary">{{ r.status|title }}</span>
                     {% endif %}
+                    {% if is_opt_run %}
+                    <span class="badge bg-warning text-dark ms-1">Optimization</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.symbol %}
+                    <span class="badge bg-light text-dark border" style="font-size: 0.7rem;">{{ r.symbol }}</span>
+                    {% else %}
+                    <small class="text-muted">{{ default_symbol }}</small>
+                    {% endif %}
                 </td>
                 <td>
                     {% if r.metrics %}
-                        {% if r.metrics.total_trades is defined %}
+                        {% if is_opt_run and r.metrics.combos_tested is defined %}
+                        <small>{{ r.metrics.combos_tested }} combos
+                        {% if r.metrics.best_net_profit is defined %}, best ${{ "%.2f"|format(r.metrics.best_net_profit) }}{% endif %}
+                        </small>
+                        {% elif r.metrics.total_trades is defined %}
                         <small>{{ r.metrics.total_trades }} trades
                         {% if r.metrics.total_profit is defined %}, ${{ "%.2f"|format(r.metrics.total_profit) }}{% endif %}
                         </small>
                         {% else %}
                         <small class="text-muted">—</small>
                         {% endif %}
+                    {% else %}
+                    <small class="text-muted">—</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if r.params %}
+                    <div class="d-flex flex-wrap gap-1">
+                        {% for p in r.params[:5] %}
+                        <span class="badge bg-dark border" style="font-size: 0.65rem;">
+                            {{ p.name }}={{ p.default }}
+                        </span>
+                        {% endfor %}
+                        {% if r.params|length > 5 %}
+                        <span class="badge bg-secondary" style="font-size: 0.65rem;">+{{ r.params|length - 5 }}</span>
+                        {% endif %}
+                    </div>
                     {% else %}
                     <small class="text-muted">—</small>
                     {% endif %}
@@ -248,10 +390,211 @@
         </div>
     </div>
 </div>
+
+<!-- ── Edit & Run Modal ──────────────────────────────── -->
+{% if params and versions %}
+<div class="modal fade" id="editRunModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="POST" action="/strategy/{{ strategy.id }}/run-with-params">
+                <input type="hidden" name="version_id" value="{{ versions[0].id }}">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-sliders me-2"></i>Edit Parameters & Run</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Run Mode -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Run Mode</label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="run_mode" id="modeBacktest" value="2" checked onchange="updateRunButton()">
+                                <label class="form-check-label" for="modeBacktest">Backtest</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="run_mode" id="modeOptimize" value="4" onchange="updateRunButton()">
+                                <label class="form-check-label" for="modeOptimize">Optimization</label>
+                            </div>
+                        </div>
+                        <div id="optimizeWarning" class="alert alert-warning mt-2 py-2 small" style="display: none;">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Optimization runs test all parameter combinations marked as "Optimize" and may take significantly longer.
+                        </div>
+                    </div>
+
+                    <!-- Symbol Selection -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Symbol</label>
+                        <select class="form-select" name="symbol" id="symbolSelect">
+                            <option value="">Default ({{ default_symbol }})</option>
+                        </select>
+                        <div class="form-text">Select the symbol to run the backtest against.</div>
+                    </div>
+
+                    <!-- Parameters Table -->
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Parameter</th>
+                                <th style="width: 120px;">Value</th>
+                                <th style="width: 80px;" class="text-center">Min</th>
+                                <th style="width: 80px;" class="text-center">Max</th>
+                                <th style="width: 80px;" class="text-center">Step</th>
+                                <th style="width: 100px;" class="text-center">Optimize</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in params %}
+                            <tr>
+                                <td>
+                                    <code>{{ p.name }}</code>
+                                    <button type="button" class="sp-info-btn d-none"
+                                            data-param-info="{{ p.name }}" tabindex="-1">i</button>
+                                </td>
+                                <td>
+                                    <input type="number" class="form-control form-control-sm"
+                                           name="param_{{ p.name }}"
+                                           value="{{ p.default }}"
+                                           step="{{ p.step }}">
+                                </td>
+                                <td class="text-center">
+                                    <input type="number" class="form-control form-control-sm opt-range"
+                                           name="min_{{ p.name }}"
+                                           value="{{ p.min }}" step="{{ p.step }}"
+                                           data-param="{{ p.name }}"
+                                           {% if p.type != 'optimize' %}disabled{% endif %}>
+                                </td>
+                                <td class="text-center">
+                                    <input type="number" class="form-control form-control-sm opt-range"
+                                           name="max_{{ p.name }}"
+                                           value="{{ p.max }}" step="{{ p.step }}"
+                                           data-param="{{ p.name }}"
+                                           {% if p.type != 'optimize' %}disabled{% endif %}>
+                                </td>
+                                <td class="text-center">
+                                    <input type="number" class="form-control form-control-sm opt-range"
+                                           name="step_{{ p.name }}"
+                                           value="{{ p.step }}" step="any"
+                                           data-param="{{ p.name }}"
+                                           {% if p.type != 'optimize' %}disabled{% endif %}>
+                                </td>
+                                <td class="text-center">
+                                    <div class="form-check form-switch d-flex justify-content-center">
+                                        <input class="form-check-input" type="checkbox"
+                                               name="optimize_{{ p.name }}"
+                                               data-param="{{ p.name }}"
+                                               onchange="toggleOptRange(this)"
+                                               {% if p.type == 'optimize' %}checked{% endif %}>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success" id="runButton"
+                        {% if not db_configured %}disabled{% endif %}>
+                        <i class="bi bi-play-fill me-1"></i><span id="runButtonText">Run Backtest</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
+// ── Param info tooltips ──
+var paramInfo = {};
+
+function escHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function setupParamInfoPopovers() {
+    // Dismiss any open popover when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.sp-info-btn') && !e.target.closest('.popover')) {
+            document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+                var pop = bootstrap.Popover.getInstance(btn);
+                if (pop) pop.hide();
+            });
+        }
+    });
+
+    document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+        var pName = btn.dataset.paramInfo;
+        var info = paramInfo[pName];
+        if (!info) return;
+
+        // Show the button (it was hidden with d-none until we confirmed data exists)
+        btn.classList.remove('d-none');
+
+        var html =
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Indicator</div>' +
+            '<div class="pi-section-text">' + escHtml(info.indicator || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Formula</div>' +
+            '<div class="pi-section-text">' + escHtml(info.math || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">This Parameter</div>' +
+            '<div class="pi-section-text">' + escHtml(info.param || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Typical Value</div>' +
+            '<div class="pi-section-text">' + escHtml(info.typical || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">When to Change</div>' +
+            '<div class="pi-section-text">' + escHtml(info.guidance || '') + '</div>' +
+            '</div>';
+
+        var titleHtml = '<span>' + escHtml(pName) + '</span>' +
+            '<button type="button" class="pi-close" aria-label="Close">&times;</button>';
+
+        new bootstrap.Popover(btn, {
+            html: true,
+            content: html,
+            title: titleHtml,
+            trigger: 'click',
+            placement: 'right',
+            fallbackPlacements: ['right', 'left', 'bottom', 'top'],
+            customClass: 'param-info-pop',
+            container: 'body',
+            sanitize: false,
+        });
+    });
+
+    // Close button inside popovers
+    document.addEventListener('click', function(e) {
+        var closeBtn = e.target.closest('.pi-close');
+        if (!closeBtn) return;
+        var popEl = closeBtn.closest('.popover');
+        if (!popEl) return;
+        document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+            var pop = bootstrap.Popover.getInstance(btn);
+            if (pop && pop.tip === popEl) pop.hide();
+        });
+    });
+}
+
+// Fetch param tooltips and wire up popovers
+fetch('/api/param-tooltips')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        paramInfo = (data && data.tooltips) || {};
+        setupParamInfoPopovers();
+    })
+    .catch(function() {});
+
 // Store version AFL content for preview
 const versionAfl = {
     {% for v in versions %}
@@ -272,5 +615,35 @@ function showAflPreview(versionId) {
 
     new bootstrap.Modal(document.getElementById("aflPreviewModal")).show();
 }
+
+function updateRunButton() {
+    const isOptimize = document.getElementById('modeOptimize')?.checked;
+    const warning = document.getElementById('optimizeWarning');
+    const btnText = document.getElementById('runButtonText');
+    if (warning) warning.style.display = isOptimize ? 'block' : 'none';
+    if (btnText) btnText.textContent = isOptimize ? 'Run Optimization' : 'Run Backtest';
+}
+
+function toggleOptRange(checkbox) {
+    const param = checkbox.dataset.param;
+    document.querySelectorAll(`.opt-range[data-param="${param}"]`).forEach(input => {
+        input.disabled = !checkbox.checked;
+    });
+}
+
+// ── Load available symbols for the symbol selector ──
+fetch('/api/symbols')
+    .then(r => r.json())
+    .then(data => {
+        const select = document.getElementById('symbolSelect');
+        if (!select || !data.symbols) return;
+        data.symbols.forEach(sym => {
+            const opt = document.createElement('option');
+            opt.value = sym;
+            opt.textContent = sym + (sym === data.default ? ' (default)' : '');
+            select.appendChild(opt);
+        });
+    })
+    .catch(() => {});
 </script>
 {% endblock %}

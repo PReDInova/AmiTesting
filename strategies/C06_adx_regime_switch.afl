@@ -24,6 +24,9 @@ rangeThreshold = Param("Range ADX Threshold", 20, 10, 25, 1);
 trendSdMult    = Param("Trend SD Mult", 1.5, 1.0, 3.0, 0.5);
 rangeSdMult    = Param("Range SD Mult", 0.75, 0.25, 1.5, 0.25);
 adxPer         = Param("ADX Period", 14, 5, 50, 1);
+temaLength     = Param("TEMA Length", 21, 5, 100, 1);
+sdBars         = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+profitMult     = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -41,12 +44,14 @@ vwStdev3 = 3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
 // ---- TEMA Indicator ----
-smoothingLength = 21;
+smoothingLength = temaLength;
 sourcePrice = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
 // ---- StdDev Exit Indicator (base multiplier = 1.0, we apply dynamic mult ourselves) ----
 sdMultiplier = 1.0;
+sdLookback = sdBars;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
@@ -120,7 +125,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target (dynamic distance) ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);

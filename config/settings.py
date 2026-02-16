@@ -19,6 +19,8 @@ APX_DIR: Path = PROJECT_ROOT / "apx"
 SCRIPTS_DIR: Path = PROJECT_ROOT / "scripts"
 RESULTS_DIR: Path = PROJECT_ROOT / "results"
 LOGS_DIR: Path = PROJECT_ROOT / "logs"
+INDICATORS_DIR: Path = PROJECT_ROOT / "indicators"
+STRATEGIES_DIR: Path = PROJECT_ROOT / "strategies"
 
 # ---------------------------------------------------------------------------
 # AmiBroker settings
@@ -27,6 +29,7 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 # Set this to the full path of your AmiBroker database directory, e.g.
 # AMIBROKER_DB_PATH = r"C:\AmiBroker\Databases\MyDatabase"
 AMIBROKER_DB_PATH: str = r"C:\Program Files (x86)\AmiBroker\Databases\GoldAsia"
+AMIBROKER_DB_DIR: str = r"C:\Program Files (x86)\AmiBroker\Databases"
 
 AMIBROKER_EXE: str = "Broker.Application"  # COM dispatch name
 AMIBROKER_EXE_PATH: str = r"C:\Program Files (x86)\AmiBroker\Broker.exe"
@@ -35,7 +38,7 @@ AMIBROKER_EXE_PATH: str = r"C:\Program Files (x86)\AmiBroker\Broker.exe"
 # Symbol & file references
 # ---------------------------------------------------------------------------
 
-GCZ25_SYMBOL: str = "GCZ25"
+GCZ25_SYMBOL: str = "GCZ5"
 
 AFL_STRATEGY_FILE: Path = AFL_DIR / "ma_crossover.afl"
 APX_TEMPLATE: Path = APX_DIR / "base.apx"
@@ -55,18 +58,20 @@ CACHE_DIR: Path = PROJECT_ROOT / "cache"
 BACKTEST_SETTINGS: dict = {
     "run_mode": 2,            # 2 = portfolio backtest
     "poll_interval": 0.5,     # seconds between status polls
-    "max_wait": 300,          # maximum seconds to wait for completion
+    "max_wait": 600,          # maximum seconds to wait for completion
     "starting_capital": 100_000,  # must match APX template <InitialEquity>
 }
 
 # ---------------------------------------------------------------------------
-# Chart settings (Sprint 3 -- trade candlestick charts)
+# Chart settings (Sprint 3 / Sprint 4 -- trade candlestick charts)
 # ---------------------------------------------------------------------------
 
 CHART_SETTINGS: dict = {
-    "bars_before_entry": 50,    # 1-min bars of context before trade entry
-    "bars_after_exit": 20,      # 1-min bars of context after trade exit
+    "bars_before_entry": 50,    # bars of context before trade entry
+    "bars_after_exit": 20,      # bars of context after trade exit
     "cache_max_age_hours": 24,  # re-fetch from AmiBroker if cache older than this
+    "valid_intervals": [60, 300, 600, 86400],  # allowed timeframes in seconds
+    "explorer_default_days": 5,  # default number of days to load in indicator explorer
 }
 
 # ---------------------------------------------------------------------------

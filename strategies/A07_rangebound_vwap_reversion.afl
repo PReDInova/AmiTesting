@@ -14,7 +14,9 @@
 
 // ---- Strategy Parameters ----
 nearBoundaryPct = Param("Near Boundary %", 25, 10, 50, 5);
+sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("SD Multiplier", 0.75, 0.1, 5.0, 0.1);
+profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -32,7 +34,9 @@ vwStdev3 = 3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
 // ---- StdDev Exit Indicator ----
+sdLookback   = sdBars;
 sdMultiplier = sdMult;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- Save computed arrays before restoring timeframe ----
@@ -78,7 +82,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -98,7 +102,8 @@ PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 
 Title = Name() + " | A07 Range-Bound VWAP Reversion" +
         " | NearBdy " + NumToStr(nearBoundaryPct, 1.0) + "%" +
-        " | SD x" + NumToStr(sdMult, 1.1) +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts" +
         " | RangeBound=" + WriteIf(isRangeBound1m, "YES", "no") +
         " | Asian Session";

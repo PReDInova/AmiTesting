@@ -14,7 +14,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.apx_builder import build_apx
-from config.settings import AFL_STRATEGY_FILE, APX_TEMPLATE
+from config.settings import AFL_STRATEGY_FILE, APX_TEMPLATE, GCZ25_SYMBOL
 
 
 # ---------------------------------------------------------------------------
@@ -127,16 +127,17 @@ class TestBuildApxErrors:
     def test_build_apx_missing_formula_element(
         self, tmp_afl_file, tmp_apx_template_no_formula, tmp_path
     ):
-        """build_apx should raise ValueError when the template XML is missing
-        the <FormulaContent> element."""
+        """build_apx should still succeed when the template XML is missing
+        the <FormulaContent> element — FormulaPath is set instead."""
         output_path = tmp_path / "output.apx"
 
-        with pytest.raises(ValueError, match="FormulaContent"):
-            build_apx(
-                afl_path=str(tmp_afl_file),
-                output_apx_path=str(output_path),
-                template_apx_path=str(tmp_apx_template_no_formula),
-            )
+        result = build_apx(
+            afl_path=str(tmp_afl_file),
+            output_apx_path=str(output_path),
+            template_apx_path=str(tmp_apx_template_no_formula),
+        )
+
+        assert Path(result).exists(), "Output APX file was not created"
 
 
 # ---------------------------------------------------------------------------
@@ -170,3 +171,64 @@ class TestBuildApxRealFiles:
         assert formula_elem.text == afl_escaped, (
             "FormulaContent does not match the escaped real AFL source file"
         )
+
+
+# ---------------------------------------------------------------------------
+# Symbol parameter tests
+# ---------------------------------------------------------------------------
+
+class TestBuildApxSymbol:
+    """Symbol parameter is injected into the APX <Symbol> tag."""
+
+    def test_build_apx_custom_symbol(self, tmp_path):
+        """When symbol='NQ' is passed, the APX <Symbol> tag contains 'NQ'."""
+        # Create minimal AFL file
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+
+        # Create minimal APX template with Symbol tag
+        template = tmp_path / "template.apx"
+        template.write_bytes(
+            b'<?xml version="1.0" encoding="iso-8859-1"?>\r\n'
+            b'<AmiBrokerAnalysis>\r\n'
+            b'<FormulaPath></FormulaPath>\r\n'
+            b'<FormulaContent></FormulaContent>\r\n'
+            b'<Symbol>PLACEHOLDER</Symbol>\r\n'
+            b'</AmiBrokerAnalysis>\r\n'
+        )
+
+        output = tmp_path / "output.apx"
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(template),
+            symbol="NQ",
+        )
+
+        content = output.read_bytes()
+        assert b"<Symbol>NQ</Symbol>" in content
+
+    def test_build_apx_default_symbol(self, tmp_path):
+        """When symbol is not passed, GCZ25_SYMBOL is used."""
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+
+        template = tmp_path / "template.apx"
+        template.write_bytes(
+            b'<?xml version="1.0" encoding="iso-8859-1"?>\r\n'
+            b'<AmiBrokerAnalysis>\r\n'
+            b'<FormulaPath></FormulaPath>\r\n'
+            b'<FormulaContent></FormulaContent>\r\n'
+            b'<Symbol>PLACEHOLDER</Symbol>\r\n'
+            b'</AmiBrokerAnalysis>\r\n'
+        )
+
+        output = tmp_path / "output.apx"
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(template),
+        )
+
+        content = output.read_bytes()
+        assert f"<Symbol>{GCZ25_SYMBOL}</Symbol>".encode() in content

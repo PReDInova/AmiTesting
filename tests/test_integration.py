@@ -28,6 +28,8 @@ from config.settings import (
 )
 from scripts.apx_builder import build_apx
 
+import run as run_module
+
 
 # ---------------------------------------------------------------------------
 # APX builder pipeline (no COM needed)
@@ -58,11 +60,11 @@ class TestApxBuilderPipeline:
         assert root.tag == "AmiBroker-Analysis"
         assert root.attrib.get("CompactMode") == "0"
 
-        # FormulaContent should contain the AFL source
+        # FormulaContent is intentionally cleared so AmiBroker reads from
+        # FormulaPath without showing a "formula is different" dialog.
         formula_elem = root.find(".//FormulaContent")
         assert formula_elem is not None
-        assert "MA(Close" in formula_elem.text
-        assert "Cross(" in formula_elem.text
+        assert formula_elem.text is None or formula_elem.text.strip() == ""
 
         # BacktestSettings should still be present
         backtest_elem = root.find(".//BacktestSettings")
@@ -124,19 +126,142 @@ class TestFullPipelineWithMockOle:
         # Database loaded
         mock_app.LoadDatabase.assert_called_once_with(r"C:\MockDB")
 
-        # Analysis project opened (once for validation, once for backtest)
-        assert mock_app.AnalysisDocs.Open.call_count == 2
+        # Analysis project opened once for backtest (validation step was removed
+        # to avoid Run() blocking on second open)
+        assert mock_app.AnalysisDocs.Open.call_count == 1
         mock_app.AnalysisDocs.Open.assert_called_with(str(output_apx))
         analysis_doc.Run.assert_called_once()
 
         # Results exported (HTML + CSV)
         assert analysis_doc.Export.call_count == 2
 
-        # Analysis doc closed (once after validation, once after backtest)
-        assert analysis_doc.Close.call_count == 2
+        # Analysis doc closed once after backtest
+        assert analysis_doc.Close.call_count == 1
 
         # Disconnect called Quit
         mock_app.Quit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Symbol pipeline tests
+# ---------------------------------------------------------------------------
+
+class TestSymbolPipeline:
+    """Symbol parameter flows through the full pipeline."""
+
+    @patch.object(run_module, "OLEBacktester")
+    @patch.object(run_module, "build_apx")
+    @patch.object(run_module, "update_run")
+    @patch.object(run_module, "create_run", return_value="fake-run-id")
+    @patch.object(run_module, "validate_afl_file", return_value=(True, []))
+    @patch.object(run_module, "get_latest_version", return_value={
+        "id": "ver-1", "version_number": 1, "label": "test", "afl_content": "Buy=1;Sell=0;",
+    })
+    @patch("scripts.strategy_db.get_strategy", return_value={"id": "strat-1", "name": "TestStrat"})
+    @patch.object(run_module, "list_strategies", return_value=[
+        {"id": "strat-1", "name": "TestStrat"},
+    ])
+    @patch.object(run_module, "seed_indicator_tooltips")
+    @patch.object(run_module, "seed_param_tooltips")
+    @patch.object(run_module, "seed_default_strategies")
+    @patch.object(run_module, "init_db")
+    @patch.object(run_module, "setup_logging")
+    def test_pipeline_passes_symbol_to_build_apx(
+        self,
+        mock_setup_logging,
+        mock_init_db,
+        mock_seed_strats,
+        mock_seed_params,
+        mock_seed_indicators,
+        mock_list_strats,
+        mock_get_strategy,
+        mock_get_version,
+        mock_validate,
+        mock_create_run,
+        mock_update_run,
+        mock_build_apx,
+        mock_ole_cls,
+        tmp_path,
+    ):
+        """run.main() with symbol passes it to build_apx and create_run."""
+        # build_apx must return a valid path string
+        mock_build_apx.return_value = str(tmp_path / "fake.apx")
+
+        # OLEBacktester mock
+        mock_bt = MagicMock()
+        mock_bt.run_full_test.return_value = True
+        mock_ole_cls.return_value = mock_bt
+
+        run_module.main(symbol="NQ")
+
+        # Assert build_apx was called with symbol="NQ"
+        mock_build_apx.assert_called_once()
+        call_kwargs = mock_build_apx.call_args
+        # symbol is passed as a keyword argument
+        assert call_kwargs.kwargs.get("symbol") == "NQ" or \
+            (len(call_kwargs) > 1 and call_kwargs[1].get("symbol") == "NQ")
+
+        # Assert create_run was called with symbol="NQ"
+        mock_create_run.assert_called_once()
+        create_kwargs = mock_create_run.call_args
+        assert create_kwargs.kwargs.get("symbol") == "NQ" or \
+            (len(create_kwargs) > 1 and create_kwargs[1].get("symbol") == "NQ")
+
+
+class TestListSymbols:
+    """list_symbols() enumerates symbols via COM."""
+
+    @patch("scripts.ole_backtest.pythoncom")
+    @patch("scripts.ole_backtest.win32com.client.Dispatch")
+    def test_list_symbols_mock_com(self, mock_dispatch, mock_pythoncom):
+        """list_symbols returns sorted ticker names from mocked COM."""
+        from scripts.ole_backtest import list_symbols
+
+        # Build mock AmiBroker app with 3 stocks
+        mock_app = MagicMock()
+        mock_dispatch.return_value = mock_app
+
+        # Create mock stock objects with Ticker attributes
+        stock_c = MagicMock()
+        stock_c.Ticker = "ZB"
+        stock_b = MagicMock()
+        stock_b.Ticker = "NQ"
+        stock_a = MagicMock()
+        stock_a.Ticker = "GCZ5"
+
+        mock_app.Stocks.Count = 3
+        mock_app.Stocks.side_effect = lambda i: [stock_a, stock_b, stock_c][i]
+
+        result = list_symbols(db_path=r"C:\MockDB")
+
+        assert result == ["GCZ5", "NQ", "ZB"]
+        mock_app.LoadDatabase.assert_called_once_with(r"C:\MockDB")
+
+    @patch("scripts.ole_backtest.pythoncom")
+    @patch("scripts.ole_backtest.win32com.client.Dispatch")
+    def test_list_symbols_empty_database(self, mock_dispatch, mock_pythoncom):
+        """list_symbols returns an empty list when the database has no symbols."""
+        from scripts.ole_backtest import list_symbols
+
+        mock_app = MagicMock()
+        mock_dispatch.return_value = mock_app
+        mock_app.Stocks.Count = 0
+
+        result = list_symbols(db_path=r"C:\MockDB")
+
+        assert result == []
+
+    @patch("scripts.ole_backtest.pythoncom")
+    @patch("scripts.ole_backtest.win32com.client.Dispatch")
+    def test_list_symbols_com_error_returns_empty(self, mock_dispatch, mock_pythoncom):
+        """list_symbols returns an empty list when COM raises an error."""
+        from scripts.ole_backtest import list_symbols
+
+        mock_dispatch.side_effect = Exception("COM not available")
+
+        result = list_symbols(db_path=r"C:\MockDB")
+
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,9 @@
 
 // ---- Strategy Parameters ----
 temaLength = Param("TEMA Length", 21, 5, 100, 1);
+sdBars     = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult     = Param("SD Multiplier", 1.0, 0.1, 5.0, 0.1);
+profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -36,7 +38,9 @@ sourcePrice = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
 // ---- StdDev Exit Indicator ----
+sdLookback   = sdBars;
 sdMultiplier = sdMult;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- Save computed arrays before restoring timeframe ----
@@ -71,7 +75,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -82,13 +86,14 @@ Short = ExRem(Short, Buy);
 
 // ---- Visualization ----
 Plot(Close, "Price", colorDefault, styleCandle);
-Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine | styleThick);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
 Plot(vwap1m, "VWAP", colorYellow, styleLine | styleThick);
 
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 
 Title = Name() + " | A06 VWAP+TEMA Confluence | TEMA(" + NumToStr(temaLength, 1.0) +
-        ") | SD x" + NumToStr(sdMult, 1.1) +
+        ") | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts" +
         " | Asian Session";

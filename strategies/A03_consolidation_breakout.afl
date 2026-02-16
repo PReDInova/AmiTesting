@@ -22,6 +22,7 @@ czMaxRangeTicks = Param("CZ Max Range (ticks)", 80, 20, 200, 5);
 czMinConsolBars = Param("CZ Min Consol Bars", 5, 1, 30, 1);
 sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 1.5, 0.1, 5.0, 0.1);
+profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -74,7 +75,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -103,4 +104,5 @@ Title = Name() + " | A03 CZ Breakout | CZ(" + NumToStr(czTemaLength, 1.0) +
         " Min=" + NumToStr(czMinConsolBars, 1.0) + "bars" +
         " | Str=" + NumToStr(czStrength1m, 1.0) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts";

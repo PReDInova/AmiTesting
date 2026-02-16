@@ -22,7 +22,9 @@ breakoutBand = Param("Breakout Band Sigma", 2, 2, 3, 1);
 adxPer       = Param("ADX Period", 14, 5, 50, 1);
 adxThreshold = Param("ADX Threshold", 30, 20, 40, 1);
 temaLength   = Param("TEMA Length", 21, 5, 100, 1);
+sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult       = Param("StdDev Multiplier", 2.0, 0.5, 5.0, 0.1);
+profitMult   = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -43,6 +45,8 @@ sourcePrice = Close;
 
 // ---- StdDev Exit Indicator ----
 sdMultiplier = sdMult;
+sdLookback = sdBars;
+sdSource     = Close;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
@@ -113,7 +117,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -124,7 +128,7 @@ Short = ExRem(Short, Buy);
 
 // ---- Visualization ----
 Plot(Close, "Price", colorDefault, styleCandle);
-Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine | styleThick);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
 Plot(vwap1m, "VWAP", colorWhite, styleLine | styleThick);
 
 // Plot all VWAP bands

@@ -23,6 +23,7 @@ adxPer          = Param("ADX Period", 14, 5, 50, 1);
 adxMaxThreshold = Param("ADX Max Threshold", 20, 10, 30, 1);
 sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 0.75, 0.1, 5.0, 0.1);
+profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
 // ---- Aggregate ticks into 1-minute bars ----
 TimeFrameSet(in1Minute);
@@ -83,7 +84,7 @@ Cover = 0;   // exits handled by ApplyStop
 
 // ---- StdDev-based stop loss and profit target ----
 ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
-ApplyStop(stopTypeProfit, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
 
 // ---- Position sizing: 1 contract ----
 SetPositionSize(1, spsShares);
@@ -94,7 +95,7 @@ Short = ExRem(Short, Buy);
 
 // ---- Visualization ----
 Plot(Close, "Price", colorDefault, styleCandle);
-Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorCyan, styleLine | styleThick);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
 
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
@@ -103,4 +104,5 @@ Title = Name() + " | A02 TEMA+ADX Mean Reversion | TEMA(" + NumToStr(temaLength,
         ") ADX(" + NumToStr(adxPer, 1.0) + ")<" + NumToStr(adxMaxThreshold, 1.0) +
         " | ADX=" + NumToStr(adx1m, 1.1) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
         " = " + NumToStr(exitDist1m, 1.4) + " pts";

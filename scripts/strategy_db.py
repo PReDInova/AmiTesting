@@ -428,6 +428,18 @@ def list_strategies(db_path: Path = None) -> list[dict]:
         conn.close()
 
 
+def find_strategy_by_name(name: str, db_path: Path = None) -> dict | None:
+    """Find a strategy by its exact name. Returns dict or None."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM strategies WHERE name = ?", (name,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def delete_strategy(strategy_id: str, db_path: Path = None) -> bool:
     """Delete a strategy and all its versions and runs (cascade)."""
     conn = _get_connection(db_path)

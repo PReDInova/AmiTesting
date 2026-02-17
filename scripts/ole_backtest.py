@@ -62,6 +62,64 @@ def list_symbols(db_path: str = None) -> list:
     return sorted(symbols)
 
 
+# ---------------------------------------------------------------------------
+# Cached symbol listing (avoids slow COM calls on every page load)
+# ---------------------------------------------------------------------------
+
+_SYMBOL_CACHE_PATH = Path(__file__).resolve().parent.parent / "cache" / "symbols.json"
+_SYMBOL_CACHE_TTL = 600  # 10 minutes
+
+
+def get_cached_symbols(db_path: str = None, refresh: bool = False) -> dict:
+    """Return available symbols with file-based caching.
+
+    Returns
+    -------
+    dict
+        ``{"symbols": [...], "stale": bool}``
+        ``stale`` is True when the cache is older than the TTL and a fresh
+        fetch failed (AmiBroker not running).
+    """
+    # Try to read existing cache
+    cached_symbols = []
+    cache_age = float("inf")
+    if _SYMBOL_CACHE_PATH.exists():
+        try:
+            data = json.loads(_SYMBOL_CACHE_PATH.read_text(encoding="utf-8"))
+            cached_symbols = data.get("symbols", [])
+            from datetime import datetime, timezone
+            fetched_at = datetime.fromisoformat(data["fetched_at"])
+            cache_age = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+        except Exception:
+            pass
+
+    # Return cache if fresh and not forcing refresh
+    if not refresh and cache_age < _SYMBOL_CACHE_TTL and cached_symbols:
+        return {"symbols": cached_symbols, "stale": False}
+
+    # Fetch fresh symbols from AmiBroker
+    try:
+        fresh = list_symbols(db_path)
+        if fresh:
+            from datetime import datetime, timezone
+            _SYMBOL_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _SYMBOL_CACHE_PATH.write_text(
+                json.dumps({
+                    "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "symbols": fresh,
+                }),
+                encoding="utf-8",
+            )
+            return {"symbols": fresh, "stale": False}
+    except Exception as exc:
+        logger.warning("get_cached_symbols: fresh fetch failed: %s", exc)
+
+    # Fall back to stale cache
+    if cached_symbols:
+        return {"symbols": cached_symbols, "stale": True}
+    return {"symbols": [], "stale": True}
+
+
 class OLEBacktester:
     """Drive AmiBroker through its COM/OLE interface."""
 

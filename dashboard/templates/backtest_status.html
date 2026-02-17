@@ -181,7 +181,16 @@
         <i class="bi bi-arrow-left me-1"></i>Back to Dashboard
     </a>
     {% if not state.running %}
-    <form method="POST" action="/backtest/run" class="d-inline">
+    <form method="POST" action="/backtest/run" class="d-inline d-flex gap-1 align-items-center">
+        {% if run_strategy_id %}
+        <input type="hidden" name="strategy_id" value="{{ run_strategy_id }}">
+        {% endif %}
+        <select class="form-select form-select-sm" name="symbol" id="symbolSelectStatus"
+                data-symbol-selector data-symbol-preselect="{{ run_symbol or '' }}"
+                style="width: auto; max-width: 160px;">
+            <option value="">{{ default_symbol }}</option>
+            <option value="__ALL__" {% if run_symbol == '__ALL__' %}selected{% endif %}>All Symbols</option>
+        </select>
         <button type="submit" class="btn btn-success">
             <i class="bi bi-play-fill me-1"></i>Run Again
         </button>

@@ -52,6 +52,11 @@
                 <h6>Run Backtest</h6>
                 <p class="text-muted small mb-2">Execute the current strategy</p>
                 <form method="POST" action="/backtest/run">
+                    <select class="form-select form-select-sm mb-2" name="symbol" id="symbolSelectDash"
+                            data-symbol-selector>
+                        <option value="">Default ({{ default_symbol }})</option>
+                        <option value="__ALL__">All Symbols</option>
+                    </select>
                     <button type="submit" class="btn btn-success btn-sm px-4"
                         {% if not db_configured %}disabled title="Configure AmiBroker database first"{% endif %}>
                         <i class="bi bi-play-fill me-1"></i>Run

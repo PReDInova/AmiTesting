@@ -244,6 +244,21 @@ def extract_strategy_indicators(afl_content: str) -> list[dict]:
         ind_params.setdefault(ind_type, {})[param_key] = p["default"]
         ind_param_mapping.setdefault(ind_type, {})[param_key] = p["name"]
 
+    # --- 3b. Propagate shared parameters between dependent indicators ---
+    # The derivative indicator computes TEMA internally, so it needs the
+    # same "period" parameter as the TEMA indicator.  When the user changes
+    # "TEMA Length" the derivative's internal TEMA must also update.
+    _SHARED_PARAMS = [
+        # (source_type, target_type, param_key)
+        ("tema", "derivative", "period"),
+    ]
+    for src_type, tgt_type, pkey in _SHARED_PARAMS:
+        if src_type in ind_params and tgt_type in detected_types:
+            if pkey in ind_params.get(src_type, {}):
+                ind_params.setdefault(tgt_type, {})[pkey] = ind_params[src_type][pkey]
+            if pkey in ind_param_mapping.get(src_type, {}):
+                ind_param_mapping.setdefault(tgt_type, {})[pkey] = ind_param_mapping[src_type][pkey]
+
     # --- 4. Build output list ---
     indicators: list[dict] = []
     for ind_type in sorted(detected_types):

@@ -266,9 +266,14 @@
                             Backtest Running...
                         </a>
                     {% else %}
-                        <form method="POST" action="/backtest/run" class="d-inline">
+                        <form method="POST" action="/backtest/run" class="d-inline d-flex gap-1 align-items-center">
+                            <select class="form-select form-select-sm" name="symbol" id="symbolSelectNav"
+                                    style="width: auto; max-width: 140px; background-color: #343a40; color: #fff; border-color: #495057;">
+                                <option value="">{{ default_symbol }}</option>
+                                <option value="__ALL__">All</option>
+                            </select>
                             <button type="submit" class="btn btn-success btn-sm btn-run-backtest">
-                                <i class="bi bi-play-fill me-1"></i>Run Backtest
+                                <i class="bi bi-play-fill me-1"></i>Run
                             </button>
                         </form>
                     {% endif %}
@@ -319,7 +324,7 @@
     <!-- Lightweight Charts (TradingView) -->
     <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 
-    <!-- Auto-dismiss flash messages after 5s -->
+    <!-- Auto-dismiss flash messages after 5s + shared symbol selector -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             setTimeout(function() {
@@ -328,7 +333,35 @@
                     bsAlert.close();
                 });
             }, 5000);
+
+            // Auto-load all symbol selectors on the page
+            document.querySelectorAll('[data-symbol-selector]').forEach(function(el) {
+                loadSymbolSelector(el.id, el.dataset.symbolPreselect || '');
+            });
         });
+
+        /**
+         * Populate a <select> element with symbols from /api/symbols.
+         * @param {string} selectId - The ID of the <select> element
+         * @param {string} [preselect] - Symbol to pre-select
+         */
+        function loadSymbolSelector(selectId, preselect) {
+            var select = document.getElementById(selectId);
+            if (!select) return;
+            fetch('/api/symbols')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (!data.symbols) return;
+                    data.symbols.forEach(function(sym) {
+                        var opt = document.createElement('option');
+                        opt.value = sym;
+                        opt.textContent = sym + (sym === data.default ? ' (default)' : '');
+                        if (preselect && sym === preselect) opt.selected = true;
+                        select.appendChild(opt);
+                    });
+                })
+                .catch(function() {});
+        }
     </script>
 
     {% block extra_scripts %}{% endblock %}

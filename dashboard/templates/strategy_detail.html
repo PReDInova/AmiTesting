@@ -86,11 +86,16 @@
         <a href="/strategy/{{ strategy.id }}/explore" class="btn btn-outline-info">
             <i class="bi bi-graph-up me-1"></i>Explore Indicators
         </a>
-        <form method="POST" action="/backtest/run">
+        <form method="POST" action="/backtest/run" class="d-flex gap-1 align-items-center">
             <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
+            <select class="form-select form-select-sm" name="symbol" id="symbolSelectHeader"
+                    data-symbol-selector style="width: auto; max-width: 160px;">
+                <option value="">{{ default_symbol }}</option>
+                <option value="__ALL__">All</option>
+            </select>
             <button type="submit" class="btn btn-success"
                 {% if not db_configured %}disabled{% endif %}>
-                <i class="bi bi-play-fill me-1"></i>Run Backtest
+                <i class="bi bi-play-fill me-1"></i>Run
             </button>
         </form>
     </div>
@@ -192,6 +197,15 @@
     </div>
 </div>
 {% else %}
+<div class="d-flex align-items-center gap-2 mb-2">
+    <small class="text-muted">Symbol for runs:</small>
+    <select class="form-select form-select-sm" id="versionSymbolSelect" data-symbol-selector
+            style="width: auto; max-width: 180px;"
+            onchange="updateVersionSymbol(this.value)">
+        <option value="">{{ default_symbol }}</option>
+        <option value="__ALL__">All Symbols</option>
+    </select>
+</div>
 <div class="table-responsive mb-4">
     <table class="table table-hover align-middle">
         <thead>
@@ -221,6 +235,7 @@
                         <form method="POST" action="/backtest/run" class="d-inline">
                             <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
                             <input type="hidden" name="version_id" value="{{ v.id }}">
+                            <input type="hidden" name="symbol" value="" class="version-symbol-input">
                             <button type="submit" class="btn btn-sm btn-outline-success" title="Run backtest"
                                 {% if not db_configured %}disabled{% endif %}>
                                 <i class="bi bi-play-fill"></i>
@@ -291,7 +306,9 @@
                     {% endif %}
                 </td>
                 <td>
-                    {% if r.symbol %}
+                    {% if r.symbol == '__ALL__' %}
+                    <span class="badge bg-info text-white" style="font-size: 0.7rem;"><i class="bi bi-collection me-1"></i>All</span>
+                    {% elif r.symbol %}
                     <span class="badge bg-light text-dark border" style="font-size: 0.7rem;">{{ r.symbol }}</span>
                     {% else %}
                     <small class="text-muted">{{ default_symbol }}</small>
@@ -425,8 +442,9 @@
                     <!-- Symbol Selection -->
                     <div class="mb-3">
                         <label class="form-label fw-bold">Symbol</label>
-                        <select class="form-select" name="symbol" id="symbolSelect">
+                        <select class="form-select" name="symbol" id="symbolSelect" data-symbol-selector>
                             <option value="">Default ({{ default_symbol }})</option>
+                            <option value="__ALL__">All Symbols</option>
                         </select>
                         <div class="form-text">Select the symbol to run the backtest against.</div>
                     </div>
@@ -631,19 +649,9 @@ function toggleOptRange(checkbox) {
     });
 }
 
-// ── Load available symbols for the symbol selector ──
-fetch('/api/symbols')
-    .then(r => r.json())
-    .then(data => {
-        const select = document.getElementById('symbolSelect');
-        if (!select || !data.symbols) return;
-        data.symbols.forEach(sym => {
-            const opt = document.createElement('option');
-            opt.value = sym;
-            opt.textContent = sym + (sym === data.default ? ' (default)' : '');
-            select.appendChild(opt);
-        });
-    })
-    .catch(() => {});
+// ── Sync version play-button symbol with page-level selector ──
+function updateVersionSymbol(val) {
+    document.querySelectorAll('.version-symbol-input').forEach(function(inp) { inp.value = val; });
+}
 </script>
 {% endblock %}

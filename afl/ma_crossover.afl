@@ -1,1 +1,201 @@
-Buy=1;Sell=0;
+// ==== Custom Metrics Path ====
+StaticVarSetText("d02_metrics_path", "C:\\Users\\prestondinova\\Documents\\AmiTesting\\results\\e2118605-971b-4591-9fcd-2baf3b1a2dbd\\custom_metrics.csv");
+// ==== End Custom Metrics Path ====
+
+// ===========================================
+// D02 - NQ Derivative TEMA Zero-Cross
+// ===========================================
+//
+// NQ intraday strategy using TEMA derivative zero-crossing.
+// Enters when the first derivative crosses zero, confirmed by
+// a minimum separation between first and second derivatives,
+// trading in the direction of the TEMA slope.
+//
+// Entry:
+//   Buy   = firstDeriv crosses above 0 + deriv separation + TEMA rising
+//   Short = firstDeriv crosses below 0 + deriv separation + TEMA falling
+//
+// Exit: Fixed-point stop loss and profit target
+//
+// Time filter: 1 hour after NY open through 2 hours before NY close.
+// Entry on the open of the next candle after the trigger bar.
+//
+// Designed for NQ (Nasdaq E-mini Futures) on native 1-minute data.
+// APX requirements: Periodicity=5 (1-minute), ApplyTo=0 (all symbols).
+// The AFL symbol filter ensures only NQ generates signals.
+
+// ---- Symbol filter (portfolio mode runs all symbols) ----
+// APX must use ApplyTo=0 so AmiBroker evaluates all symbols.
+// This filter ensures only NQ generates entry signals.
+isTargetSymbol = Name() == "NQ";
+
+// ---- Strategy Parameters ----
+temaLength    = Param("TEMA Length", 8, 3, 50, 1);
+lookback      = Param("Deriv Lookback", 5, 2, 21, 1);
+minDerivSep   = Param("Min Deriv Separation", 1, 0.1, 10, 0.1);
+stopPoints    = Param("Stop Loss (pts)", 30, 5, 200, 1);
+targetPoints  = Param("Profit Target (pts)", 60, 5, 400, 1);
+
+// ---- Time Filter Parameters ----
+// Database stores times in UTC.
+// NY Open  = 9:30 AM ET = 14:30 UTC (EST) / 13:30 UTC (EDT)
+// NY Close = 4:00 PM ET = 21:00 UTC (EST) / 20:00 UTC (EDT)
+// Default: 1hr after open (15:30 UTC) through 2hrs before close (19:00 UTC)
+tradeStartTime = Param("Trade Start (HHMMSS)", 153000, 0, 235959, 1);
+tradeEndTime   = Param("Trade End (HHMMSS)", 190000, 0, 235959, 1);
+
+// ---- TEMA(n) using built-in EMA ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
+// ---- Derivative Calculation ----
+firstDeriv  = (temas - Ref(temas, -lookback)) / lookback;
+secondDeriv = firstDeriv - Ref(firstDeriv, -lookback);
+
+// ---- Time Filter (UTC) ----
+tn = TimeNum();
+inTradingWindow = tn >= tradeStartTime AND tn <= tradeEndTime;
+
+// ---- TEMA Direction (slope) ----
+temaRising  = temas > Ref(temas, -1);
+temaFalling = temas < Ref(temas, -1);
+
+// ---- Entry Signals ----
+// First derivative crosses zero
+derivCrossUp   = Cross(firstDeriv, 0);   // crosses above 0
+derivCrossDown = Cross(0, firstDeriv);    // crosses below 0
+
+// Separation between first and second derivative (absolute difference)
+derivSep = abs(firstDeriv - secondDeriv) >= minDerivSep;
+
+// Buy: deriv crosses up + separation + TEMA rising + in time window + correct symbol
+rawBuy   = derivCrossUp AND derivSep AND temaRising AND inTradingWindow AND isTargetSymbol;
+// Short: deriv crosses down + separation + TEMA falling + in time window + correct symbol
+rawShort = derivCrossDown AND derivSep AND temaFalling AND inTradingWindow AND isTargetSymbol;
+
+// ---- Entry on open of NEXT bar after trigger ----
+SetTradeDelays(1, 1, 1, 1);
+BuyPrice   = Open;
+SellPrice  = Open;
+ShortPrice = Open;
+CoverPrice = Open;
+
+// ---- Entry signals ----
+Buy   = rawBuy;
+Sell  = 0;   // exits handled by ApplyStop
+Short = rawShort;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- Fixed-point stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, stopPoints);
+ApplyStop(stopTypeProfit, stopModePoint, targetPoints);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Store indicator arrays for CBT custom metrics (per-symbol) ----
+temaSlope = temas - Ref(temas, -1);
+StaticVarSet("d02_fd_" + Name(), firstDeriv);
+StaticVarSet("d02_sd_" + Name(), secondDeriv);
+StaticVarSet("d02_ts_" + Name(), temaSlope);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(temas, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
+
+// Mark entry signals
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | D02 NQ Deriv TEMA Zero-Cross" +
+        " | TEMA(" + NumToStr(temaLength, 1.0) + ")" +
+        " | Deriv(" + NumToStr(lookback, 1.0) + ")" +
+        " | Sep=" + NumToStr(minDerivSep, 1.1) +
+        " | Stop=" + NumToStr(stopPoints, 1.0) +
+        " | Target=" + NumToStr(targetPoints, 1.0) +
+        " | Window=" + NumToStr(tradeStartTime, 1.0) + "-" + NumToStr(tradeEndTime, 1.0);
+
+// ---- Custom Backtest Procedure: write per-trade metrics to CSV ----
+// AmiBroker's trade.AddCustomMetric may not be supported in all versions.
+// Instead, write a sidecar CSV that run.py merges post-backtest.
+SetCustomBacktestProc("");
+
+if (Status("action") == actionPortfolio)
+{
+    bo = GetBacktesterObject();
+    bo.Backtest();
+
+    // Build output path from the results dir stored in StaticVar
+    _metricsPath = StaticVarGetText("d02_metrics_path");
+    if (_metricsPath == "")
+    {
+        _metricsPath = "C:\\Users\\prestondinova\\Documents\\AmiTesting\\results\\d02_custom_metrics.csv";
+    }
+
+    fh = fopen(_metricsPath, "w");
+    if (fh)
+    {
+        fputs("EntryDate,1stDeriv@Entry,2ndDeriv@Entry,TEMASlope@Entry,1stDeriv@Exit,2ndDeriv@Exit,1stDeriv Min,1stDeriv Max,2ndDeriv Min,2ndDeriv Max\n", fh);
+
+        for (trade = bo.GetFirstTrade(); trade; trade = bo.GetNextTrade())
+        {
+            sym = trade.Symbol;
+            SetForeign(sym);
+
+            _fd = StaticVarGet("d02_fd_" + sym);
+            _sd = StaticVarGet("d02_sd_" + sym);
+            _ts = StaticVarGet("d02_ts_" + sym);
+
+            eDT = trade.EntryDateTime;
+            xDT = trade.ExitDateTime;
+
+            // Lookup values at entry/exit datetimes
+            fdEntry = Nz(Lookup(_fd, eDT, 1));
+            sdEntry = Nz(Lookup(_sd, eDT, 1));
+            tsEntry = Nz(Lookup(_ts, eDT, 1));
+            fdExit  = Nz(Lookup(_fd, xDT, 1));
+            sdExit  = Nz(Lookup(_sd, xDT, 1));
+
+            // Min/Max between entry and exit
+            eIdx = Nz(Lookup(BarIndex(), eDT, 1));
+            xIdx = Nz(Lookup(BarIndex(), xDT, 1));
+
+            fdMin = fdEntry; fdMax = fdEntry;
+            sdMin = sdEntry; sdMax = sdEntry;
+            if (eIdx < xIdx)
+            {
+                for (i = eIdx; i <= xIdx; i++)
+                {
+                    tmpFd = Nz(_fd[i]);
+                    if (tmpFd < fdMin) fdMin = tmpFd;
+                    if (tmpFd > fdMax) fdMax = tmpFd;
+                    tmpSd = Nz(_sd[i]);
+                    if (tmpSd < sdMin) sdMin = tmpSd;
+                    if (tmpSd > sdMax) sdMax = tmpSd;
+                }
+            }
+
+            RestorePriceArrays();
+
+            // Write row: EntryDate matches trade CSV "Date" column for merge
+            fputs(DateTimeToStr(eDT) + "," +
+                  NumToStr(fdEntry, 1.6) + "," +
+                  NumToStr(sdEntry, 1.6) + "," +
+                  NumToStr(tsEntry, 1.6) + "," +
+                  NumToStr(fdExit, 1.6) + "," +
+                  NumToStr(sdExit, 1.6) + "," +
+                  NumToStr(fdMin, 1.6) + "," +
+                  NumToStr(fdMax, 1.6) + "," +
+                  NumToStr(sdMin, 1.6) + "," +
+                  NumToStr(sdMax, 1.6) + "\n", fh);
+        }
+
+        fclose(fh);
+    }
+}

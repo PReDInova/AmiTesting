@@ -331,36 +331,13 @@ class StockDataFetcher:
         return StockDataFetcher._aggregate_bars(raw_ticks, 60)
 
 
-def get_latest_bars(symbol: str, num_bars: int = 500, interval: int = 60,
-                    days: int | None = None,
-                    end_date: str | None = None) -> dict:
-    """Fetch recent bars for *symbol* from AmiBroker.
-
-    Parameters
-    ----------
-    symbol : str
-        Ticker symbol in the AmiBroker database.
-    num_bars : int
-        Maximum number of raw quotations to read (used as a fallback
-        when *days* is ``None``).
-    interval : int
-        Target bar size in seconds (60, 300, 600, 86400).
-    days : int or None
-        If provided, only return data from the most recent *days* calendar
-        days.  This is much faster than reading thousands of quotations
-        and is the recommended way to control the data window.  When
-        ``None`` the function falls back to reading the last *num_bars*
-        quotations.
-    end_date : str or None
-        Optional end date in ``YYYY-MM-DD`` format.  When provided, the
-        data window ends at this date instead of at the last available
-        quotation.  Combined with *days*, this lets users sample any
-        historical period: ``[end_date - days .. end_date]``.  When
-        ``None`` (default), the last quotation in the database is used.
+def _get_latest_bars_once(symbol: str, num_bars: int = 500, interval: int = 60,
+                          days: int | None = None,
+                          end_date: str | None = None) -> dict:
+    """Single-attempt fetch of recent bars (called by :func:`get_latest_bars`).
 
     Returns ``{"data": [...], "error": None, "data_range": {...}}`` on
-    success.  ``data_range`` contains ``first_date``, ``last_date``, and
-    ``last_available_date`` (the very last date in the database).
+    success, or ``{"data": [], "error": "message"}`` on failure.
     """
     fetcher = StockDataFetcher()
     if not fetcher.connect():
@@ -477,6 +454,73 @@ def get_latest_bars(symbol: str, num_bars: int = 500, interval: int = 60,
         return {"data": [], "error": str(exc)}
     finally:
         fetcher.disconnect()
+
+
+import time as _time
+
+def get_latest_bars(symbol: str, num_bars: int = 500, interval: int = 60,
+                    days: int | None = None,
+                    end_date: str | None = None,
+                    _max_retries: int = 3) -> dict:
+    """Fetch recent bars for *symbol* from AmiBroker with automatic retry.
+
+    AmiBroker's COM server occasionally throws ``RPC_E_SERVERFAULT``
+    (``-2147417851``) when the OLE interface is momentarily busy (e.g.
+    concurrent requests from Flask worker threads).  This wrapper retries
+    the fetch up to *_max_retries* times with a short back-off delay.
+
+    Parameters
+    ----------
+    symbol : str
+        Ticker symbol in the AmiBroker database.
+    num_bars : int
+        Maximum number of raw quotations to read (used as a fallback
+        when *days* is ``None``).
+    interval : int
+        Target bar size in seconds (60, 300, 600, 86400).
+    days : int or None
+        If provided, only return data from the most recent *days* calendar
+        days.  This is much faster than reading thousands of quotations
+        and is the recommended way to control the data window.  When
+        ``None`` the function falls back to reading the last *num_bars*
+        quotations.
+    end_date : str or None
+        Optional end date in ``YYYY-MM-DD`` format.  When provided, the
+        data window ends at this date instead of at the last available
+        quotation.  Combined with *days*, this lets users sample any
+        historical period: ``[end_date - days .. end_date]``.  When
+        ``None`` (default), the last quotation in the database is used.
+
+    Returns ``{"data": [...], "error": None, "data_range": {...}}`` on
+    success.  ``data_range`` contains ``first_date``, ``last_date``, and
+    ``last_available_date`` (the very last date in the database).
+    """
+    last_result = None
+    for attempt in range(1, _max_retries + 1):
+        result = _get_latest_bars_once(
+            symbol=symbol, num_bars=num_bars, interval=interval,
+            days=days, end_date=end_date,
+        )
+        if not result.get("error"):
+            return result
+
+        last_result = result
+        err = result["error"]
+
+        # Retry only on transient COM server faults
+        if "-2147417851" in str(err) or "server threw an exception" in str(err).lower():
+            logger.warning(
+                "COM server fault for %s (attempt %d/%d), retrying in %ds...",
+                symbol, attempt, _max_retries, attempt,
+            )
+            _time.sleep(attempt)  # back off: 1s, 2s, 3s
+            continue
+
+        # Non-transient error — return immediately
+        return result
+
+    logger.error("All %d attempts failed for %s.", _max_retries, symbol)
+    return last_result
 
 
 # ======================================================================

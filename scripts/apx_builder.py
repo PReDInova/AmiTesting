@@ -153,15 +153,22 @@ def build_apx(
             output = output[:per_start] + per_val + output[per_end:]
             logger.info("Periodicity set to: %d", periodicity)
 
-    # --- Set Symbol (required for ApplyTo=1 "current symbol" backtests) -----
-    effective_symbol = symbol or GCZ25_SYMBOL
+    # --- Set Symbol / ApplyTo mode -------------------------------------------
+    if symbol == "__ALL__":
+        # "All Symbols" mode: set ApplyTo=0 so AmiBroker iterates every ticker
+        output = output.replace(b"<ApplyTo>1</ApplyTo>", b"<ApplyTo>0</ApplyTo>")
+        logger.info("ApplyTo set to 0 (All Symbols)")
+        effective_symbol = ""
+    else:
+        effective_symbol = symbol or GCZ25_SYMBOL
+
     sym_open = b"<Symbol>"
     sym_close = b"</Symbol>"
     if sym_open in output and sym_close in output:
         sym_start = output.find(sym_open) + len(sym_open)
         sym_end = output.find(sym_close)
         output = output[:sym_start] + effective_symbol.encode("iso-8859-1") + output[sym_end:]
-        logger.info("Symbol set to: %s", effective_symbol)
+        logger.info("Symbol set to: %s", effective_symbol or "(all symbols)")
 
     # Write output as raw bytes (no text-mode conversion) -------------------
     output_apx_path.write_bytes(output)

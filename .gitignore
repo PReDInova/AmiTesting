@@ -47,6 +47,11 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 
+# Strategy builder generated files (keep structure, ignore output)
+strategies/*/results.*
+strategies/*/strategy.apx
+strategies/manifest.json
+
 # AmiBroker generated files
 *.apx.bak
 

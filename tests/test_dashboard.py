@@ -295,3 +295,211 @@ def test_explorer_preserves_zoom_on_param_change():
     assert any(pos < restore_pos for pos in set_data_positions), (
         "Range must be restored after indicator data is set"
     )
+
+
+# ---------------------------------------------------------------------------
+# Trade chart modal – strategy indicator tests
+# ---------------------------------------------------------------------------
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "dashboard" / "templates"
+
+
+def test_run_detail_passes_indicator_configs(client):
+    """The run detail route should inject strategyIndicatorConfigs into the
+    rendered page so the trade chart modal can use strategy-specific indicators."""
+    from scripts.strategy_db import create_strategy, create_version, create_run, update_run
+
+    afl = (
+        '#include_once "indicators/tema.afl"\n'
+        'Buy = Close > MA(Close, 20);\n'
+        'Sell = Close < MA(Close, 20);\n'
+    )
+    sid = create_strategy("Test Indicator Passthrough")
+    vid = create_version(sid, afl_content=afl, label="v1")
+    rid = create_run(vid, sid, afl_content=afl, symbol="GCZ25")
+    # Mark completed with a CSV so the page renders the trade table
+    update_run(rid, status="completed", results_csv="results.csv")
+
+    response = client.get(f"/run/{rid}")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "strategyIndicatorConfigs" in html, (
+        "run_detail must pass indicator_configs to the template as strategyIndicatorConfigs"
+    )
+
+
+def test_trade_modal_uses_strategy_indicators():
+    """The trade chart modal must use strategy indicator toggles instead of
+    hardcoded SMA/EMA/BBands toggles."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    # Old hardcoded toggles should be gone
+    assert 'id="indSMA"' not in html, (
+        "Hardcoded SMA toggle should be removed"
+    )
+    assert 'id="indEMA"' not in html, (
+        "Hardcoded EMA toggle should be removed"
+    )
+    assert 'id="indBBands"' not in html, (
+        "Hardcoded BBands toggle should be removed"
+    )
+    assert "btnLoadPreset" not in html, (
+        "Strategy Preset button should be removed (indicators load automatically)"
+    )
+
+    # Strategy indicator toggles should be generated from indicator_configs
+    assert "indicator_configs" in html, (
+        "Template must reference indicator_configs for toggle generation"
+    )
+
+
+def test_trade_modal_has_subpane_container():
+    """The trade chart modal must have a sub-pane container for non-overlay
+    indicators like RSI, ADX, Stochastic, and Derivative."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert 'id="tradeSubPaneChart"' in html, (
+        "Modal must have a sub-pane chart container"
+    )
+    assert 'id="tradeSubPaneCard"' in html, (
+        "Modal must have a sub-pane card wrapper"
+    )
+
+
+def test_trade_modal_has_data_tooltip():
+    """The trade chart modal must have a data tooltip element for displaying
+    OHLC and indicator values at the crosshair position."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert 'id="tradeDataTooltip"' in html, (
+        "Modal must have a data tooltip element"
+    )
+    assert "trade-data-tooltip" in html, (
+        "Tooltip CSS class must be defined"
+    )
+    assert "updateTradeDataTooltip" in html, (
+        "Tooltip update function must exist"
+    )
+
+
+def test_trade_chart_supports_overlay_and_subpane_split():
+    """The chart rendering JS must split indicators into overlay (main chart)
+    and sub-pane groups based on the overlay flag."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert "overlay !== false" in html or "overlay === false" in html, (
+        "Chart must check indicator overlay flag to split into main/sub-pane"
+    )
+    assert "tradeCreateSubPane" in html, (
+        "Sub-pane creation function must exist"
+    )
+    assert "tradeRenderIndicatorSeries" in html, (
+        "Shared indicator series rendering function must exist"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backtest trade table – sorting & column statistics tests
+# ---------------------------------------------------------------------------
+
+STRATEGIES_DIR = Path(__file__).resolve().parent.parent / "strategies"
+
+
+def test_backtest_table_sortable_headers():
+    """Backtest trade table headers must have the bt-sortable class and
+    sort icon for click-to-sort functionality."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert 'class="bt-sortable"' in html, (
+        "Trade table headers must have bt-sortable class"
+    )
+    assert 'id="btTradeTable"' in html, (
+        "Trade table must have btTradeTable id"
+    )
+
+
+def test_backtest_table_sort_js():
+    """Sorting JS must exist for .bt-sortable elements in the backtest
+    trade table."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert "btTable.querySelectorAll('.bt-sortable')" in html, (
+        "Sort JS must query .bt-sortable headers"
+    )
+    assert "btSortDir" in html, (
+        "Sort direction state variable must exist"
+    )
+
+
+def test_column_stats_modal_exists():
+    """A column statistics modal must exist in the template for showing
+    summary stats and a histogram when double-clicking a column header."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert 'id="colStatsModal"' in html, (
+        "Column statistics modal must exist"
+    )
+    assert 'id="colStatsChart"' in html, (
+        "Histogram canvas must exist inside the stats modal"
+    )
+    assert 'id="colStatsBody"' in html, (
+        "Stats table body must exist inside the stats modal"
+    )
+
+
+def test_column_stats_js():
+    """Column statistics JS must compute mean, median, min, max, std dev
+    and render a histogram via Chart.js."""
+    html = (TEMPLATE_DIR / "results_detail.html").read_text(encoding="utf-8")
+
+    assert "dblclick" in html, (
+        "Double-click event must be bound for column stats"
+    )
+    assert "_colStatsChartInstance" in html, (
+        "Chart instance variable must exist for cleanup"
+    )
+    assert "new Chart(" in html, (
+        "Chart.js histogram must be created"
+    )
+    # Verify stats computations
+    assert "stdDev" in html or "Std Dev" in html, (
+        "Standard deviation must be computed"
+    )
+
+
+def test_d02_cbt_code_present():
+    """D02 AFL must contain Custom Backtest Procedure code with
+    StaticVarSet, SetCustomBacktestProc, and AddCustomMetric calls."""
+    afl_path = STRATEGIES_DIR / "D02_nq_deriv_tema_zerocross.afl"
+    afl = afl_path.read_text(encoding="utf-8")
+
+    assert 'SetCustomBacktestProc("")' in afl, (
+        "D02 must enable inline CBT"
+    )
+    assert 'StaticVarSet("d02_fd_"' in afl, (
+        "D02 must store firstDeriv as StaticVar"
+    )
+    assert 'StaticVarSet("d02_sd_"' in afl, (
+        "D02 must store secondDeriv as StaticVar"
+    )
+    assert 'StaticVarSet("d02_ts_"' in afl, (
+        "D02 must store temaSlope as StaticVar"
+    )
+
+    # Verify all 9 custom metric columns appear in the fputs CSV header
+    assert "1stDeriv@Entry" in afl, "D02 must output 1stDeriv@Entry"
+    assert "2ndDeriv@Entry" in afl, "D02 must output 2ndDeriv@Entry"
+    assert "TEMASlope@Entry" in afl, "D02 must output TEMASlope@Entry"
+    assert "1stDeriv@Exit" in afl, "D02 must output 1stDeriv@Exit"
+    assert "2ndDeriv@Exit" in afl, "D02 must output 2ndDeriv@Exit"
+    assert "1stDeriv Min" in afl, "D02 must output 1stDeriv Min"
+    assert "1stDeriv Max" in afl, "D02 must output 1stDeriv Max"
+    assert "2ndDeriv Min" in afl, "D02 must output 2ndDeriv Min"
+    assert "2ndDeriv Max" in afl, "D02 must output 2ndDeriv Max"
+
+    # Verify sidecar CSV approach
+    assert 'StaticVarGetText("d02_metrics_path")' in afl, (
+        "D02 must read the metrics output path from StaticVar"
+    )
+    assert "fopen(" in afl, "D02 must write sidecar CSV via fopen"
+    assert "fputs(" in afl, "D02 must write rows via fputs"

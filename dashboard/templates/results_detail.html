@@ -154,6 +154,31 @@
         background: rgba(255,255,255,0.9);
         z-index: 10;
     }
+    /* Trade chart data tooltip */
+    .trade-data-tooltip {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 20;
+        background: rgba(255,255,255,0.92);
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        pointer-events: none;
+        display: none;
+        min-width: 140px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .trade-data-tooltip.visible { display: block; }
+    .trade-data-tooltip .tt-time { font-weight: 600; margin-bottom: 2px; color: #555; }
+    .trade-data-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px; }
+    .trade-data-tooltip .tt-label { color: #888; }
+    .trade-data-tooltip .tt-val { font-weight: 500; font-variant-numeric: tabular-nums; }
+    .trade-data-tooltip .tt-up { color: #26a69a; }
+    .trade-data-tooltip .tt-down { color: #ef5350; }
+    .trade-data-tooltip .tt-divider { border-top: 1px solid #eee; margin: 3px 0; }
 </style>
 {% endblock %}
 
@@ -192,7 +217,11 @@
     {% elif run.status == "running" %}
     <span class="badge bg-info small">Running</span>
     {% endif %}
-    {% if run and run.symbol %}
+    {% if run and run.symbol == '__ALL__' %}
+    <span class="badge bg-info text-white">
+        <i class="bi bi-collection me-1"></i>All Symbols
+    </span>
+    {% elif run and run.symbol %}
     <span class="badge bg-light text-dark border">
         <i class="bi bi-tag me-1"></i>{{ run.symbol }}
     </span>
@@ -202,6 +231,33 @@
     {% endif %}
 </div>
 {% endif %}
+
+{# ── Symbol Switcher ─────────────────────────────────── #}
+{% if run and symbol_runs and symbol_runs|length > 1 %}
+<div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+    <small class="text-muted fw-bold">Symbol Runs:</small>
+    {% for sym, sr in symbol_runs|dictsort %}
+    {% set is_current = (sym == (run.symbol or default_symbol)) %}
+    <a href="/run/{{ sr.run_id }}"
+       class="btn btn-sm {{ 'btn-primary' if is_current else 'btn-outline-secondary' }}">
+        {% if sym == '__ALL__' %}
+        <i class="bi bi-collection me-1"></i>All
+        {% else %}
+        <i class="bi bi-tag me-1"></i>{{ sym }}
+        {% endif %}
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+
+{# ── No-Results Prompt (shown when user selects a symbol with no runs) ── #}
+<div id="noResultsBanner" class="alert alert-info d-flex align-items-center d-none mb-3" role="alert">
+    <i class="bi bi-info-circle-fill me-2"></i>
+    <span id="noResultsText"></span>
+    <button id="noResultsRunBtn" class="btn btn-warning btn-sm ms-auto">
+        <i class="bi bi-play-fill me-1"></i>Run Backtest
+    </button>
+</div>
 
 <div class="header-bar d-flex flex-wrap align-items-center justify-content-between mb-3 gap-2">
     <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -244,11 +300,32 @@
             </button>
         </form>
         {% if db_configured %}
-        <form method="POST" action="/backtest/run" class="d-inline">
+        <form method="POST" action="/backtest/run" class="d-inline d-flex gap-1 align-items-center">
+            {% if run and run.strategy_id %}
+            <input type="hidden" name="strategy_id" value="{{ run.strategy_id }}">
+            {% endif %}
+            {% if run and run.version_id %}
+            <input type="hidden" name="version_id" value="{{ run.version_id }}">
+            {% endif %}
+            <select class="form-select form-select-sm" name="symbol" id="symbolSelectHeader"
+                    data-symbol-selector
+                    data-symbol-preselect="{{ run.symbol or '' if run else '' }}"
+                    style="width: auto; max-width: 140px;">
+                <option value="">{{ default_symbol }}</option>
+                <option value="__ALL__" {% if run and run.symbol == '__ALL__' %}selected{% endif %}>All Symbols</option>
+            </select>
             <button type="submit" class="btn btn-warning btn-sm">
                 <i class="bi bi-play-fill me-1"></i>Run Backtest
             </button>
         </form>
+        {% if run %}
+        <form method="POST" action="/strategy/reverse" class="d-inline">
+            <input type="hidden" name="run_id" value="{{ run.id }}">
+            <button type="submit" class="btn btn-outline-info btn-sm">
+                <i class="bi bi-arrow-repeat me-1"></i>Reverse Strategy
+            </button>
+        </form>
+        {% endif %}
         {% endif %}
     </div>
 </div>
@@ -287,8 +364,15 @@
                         <i class="bi bi-bookmark-plus me-1"></i>Save Version
                     </button>
                     {% if db_configured %}
-                    <form method="POST" action="/backtest/run" class="afl-form d-inline">
+                    <form method="POST" action="/backtest/run" class="afl-form d-inline d-flex gap-1 align-items-center">
                         <textarea name="afl_content" style="display:none;"></textarea>
+                        <select class="form-select form-select-sm" name="symbol" id="symbolSelectAfl"
+                                data-symbol-selector
+                                data-symbol-preselect="{{ run.symbol or '' if run else '' }}"
+                                style="width: auto; max-width: 130px;">
+                            <option value="">{{ default_symbol }}</option>
+                            <option value="__ALL__" {% if run and run.symbol == '__ALL__' %}selected{% endif %}>All</option>
+                        </select>
                         <button type="submit" class="btn btn-warning btn-sm">
                             <i class="bi bi-play-fill me-1"></i>Run
                         </button>
@@ -734,13 +818,18 @@
         <div class="card-body p-0">
             <div class="table-responsive">
                 <table class="table table-sm table-striped table-hover align-middle mb-0"
-                       style="font-size: 0.85rem;">
+                       id="btTradeTable" style="font-size: 0.85rem;">
                     <thead class="table-light">
                         <tr>
                             <th>#</th>
                             {% if parsed.columns is defined %}
                                 {% for col in parsed.columns %}
-                                <th>{{ col }}</th>
+                                <th class="bt-sortable" data-col="{{ col }}"
+                                    style="cursor: pointer; user-select: none;"
+                                    title="Click to sort · Double-click for stats">
+                                    {{ col }}
+                                    <i class="bi bi-chevron-expand ms-1" style="font-size: 0.6rem; opacity: 0.4;"></i>
+                                </th>
                                 {% endfor %}
                             {% else %}
                                 <th>Symbol</th>
@@ -843,6 +932,26 @@
 {% endif %}
 
 {% endif %}
+
+{# ── Column Statistics Modal ────────────── #}
+<div class="modal fade" id="colStatsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title" id="colStatsTitle">Column Statistics</h6>
+                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <table class="table table-sm table-borderless mb-3" style="font-size: 0.85rem;">
+                    <tbody id="colStatsBody"></tbody>
+                </table>
+                <div style="height: 200px;">
+                    <canvas id="colStatsChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 {# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ROW 4 — Strategy Description (Collapsed by Default)
@@ -1007,39 +1116,43 @@
                         <button type="button" class="btn btn-outline-secondary" data-interval="86400">D</button>
                     </div>
                 </div>
-                {# Indicator toggles (Sprint 4) #}
+                {# Strategy indicator toggles #}
                 <div class="px-3 py-1 border-bottom d-flex align-items-center flex-wrap gap-2" style="font-size: 0.8rem;">
                     <span class="text-muted fw-semibold me-1">Indicators:</span>
                     <div class="d-flex gap-2 flex-wrap" id="indicatorToggles">
+                        {% for cfg in indicator_configs %}
                         <div class="form-check form-check-inline form-switch mb-0">
-                            <input class="form-check-input indicator-toggle" type="checkbox" id="indSMA"
-                                   data-type="sma" data-params='{"period": 20}'>
-                            <label class="form-check-label" for="indSMA" style="font-size: 0.78rem;">SMA(20)</label>
+                            <input class="form-check-input indicator-toggle" type="checkbox" checked
+                                   id="indCfg{{ loop.index }}"
+                                   data-type="{{ cfg.type }}"
+                                   data-params='{{ cfg.params | tojson }}'
+                                   data-overlay='{{ cfg.overlay | tojson }}'
+                                   data-color="{{ cfg.color }}">
+                            <label class="form-check-label" for="indCfg{{ loop.index }}" style="font-size: 0.78rem;">
+                                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{{ cfg.color }};margin-right:3px;vertical-align:middle;"></span>{{ cfg.type | upper }}
+                            </label>
                         </div>
-                        <div class="form-check form-check-inline form-switch mb-0">
-                            <input class="form-check-input indicator-toggle" type="checkbox" id="indEMA"
-                                   data-type="ema" data-params='{"period": 20}'>
-                            <label class="form-check-label" for="indEMA" style="font-size: 0.78rem;">EMA(20)</label>
-                        </div>
-                        <div class="form-check form-check-inline form-switch mb-0">
-                            <input class="form-check-input indicator-toggle" type="checkbox" id="indBBands"
-                                   data-type="bbands" data-params='{"period": 20, "std_dev": 2.0}'>
-                            <label class="form-check-label" for="indBBands" style="font-size: 0.78rem;">BBands(20,2)</label>
+                        {% endfor %}
+                    </div>
+                </div>
+                {# Chart area with data tooltip #}
+                <div style="position:relative;">
+                    <div class="trade-data-tooltip" id="tradeDataTooltip"></div>
+                    {# Main chart container #}
+                    <div id="candlestickChartContainer">
+                        <div class="chart-loading-overlay" id="chartLoading">
+                            <div class="text-center">
+                                <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                                <p class="text-muted mt-2 mb-0" style="font-size: 0.85rem;">Loading chart data from AmiBroker...</p>
+                            </div>
                         </div>
                     </div>
-                    {% if run %}
-                    <button class="btn btn-outline-primary btn-sm py-0 px-2 ms-auto" id="btnLoadPreset"
-                            style="font-size: 0.75rem;" title="Load indicators from strategy AFL">
-                        <i class="bi bi-magic me-1"></i>Strategy Preset
-                    </button>
-                    {% endif %}
-                </div>
-                {# Chart container #}
-                <div id="candlestickChartContainer">
-                    <div class="chart-loading-overlay" id="chartLoading">
-                        <div class="text-center">
-                            <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
-                            <p class="text-muted mt-2 mb-0" style="font-size: 0.85rem;">Loading chart data from AmiBroker...</p>
+                    {# Sub-pane for non-overlay indicators (RSI, ADX, etc.) #}
+                    <div id="tradeSubPaneCard" style="display:none; border-top:1px solid #e9ecef;">
+                        <div style="position:relative;">
+                            <span class="text-muted" id="tradeSubPaneLabel"
+                                  style="position:absolute;top:4px;left:8px;font-size:0.7rem;z-index:2;"></span>
+                            <div id="tradeSubPaneChart" style="height:150px;"></div>
                         </div>
                     </div>
                 </div>
@@ -1066,7 +1179,49 @@
 
 {% block extra_scripts %}
 <script>
+/* Symbol runs map: symbol -> {run_id, symbol} for completed sibling runs */
+const symbolRunsMap = {{ (symbol_runs or {}) | tojson }};
+const currentRunSymbol = {{ ((run.symbol if run else '') or (default_symbol if default_symbol is defined else '')) | tojson }};
+
 document.addEventListener('DOMContentLoaded', function() {
+
+    /* ═══════════════════════════════════════════════════════
+       SYMBOL SWITCHER — Navigate to results for selected symbol
+       ═══════════════════════════════════════════════════════ */
+    (function() {
+        var symbolSelect = document.getElementById('symbolSelectHeader');
+        var noResultsBanner = document.getElementById('noResultsBanner');
+        var noResultsText = document.getElementById('noResultsText');
+        var noResultsRunBtn = document.getElementById('noResultsRunBtn');
+        if (!symbolSelect) return;
+
+        symbolSelect.addEventListener('change', function() {
+            var sym = this.value || currentRunSymbol;
+            if (noResultsBanner) noResultsBanner.classList.add('d-none');
+
+            // Same symbol as current run — do nothing
+            if (sym === currentRunSymbol) return;
+
+            if (symbolRunsMap[sym]) {
+                // Completed run exists for this symbol — navigate to it
+                window.location.href = '/run/' + symbolRunsMap[sym].run_id;
+            } else {
+                // No results for this symbol — show prompt
+                if (noResultsText) {
+                    noResultsText.textContent = '\u201c' + sym + '\u201d has no results. Would you like to run a backtest?';
+                    noResultsBanner.classList.remove('d-none');
+                }
+            }
+        });
+
+        // "Run Backtest" button in the no-results banner reuses the existing form
+        if (noResultsRunBtn) {
+            noResultsRunBtn.addEventListener('click', function() {
+                var form = symbolSelect.closest('form');
+                if (form) form.submit();
+            });
+        }
+    })();
 
     /* ═══════════════════════════════════════════════════════
        OPTIMIZATION — Distribution Chart + Table Sort
@@ -1187,6 +1342,146 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     })();
     {% endif %}
+
+    /* ═══════════════════════════════════════════════════════
+       BACKTEST TABLE — Sorting & Column Statistics
+       ═══════════════════════════════════════════════════════ */
+    (function() {
+        var btTable = document.getElementById('btTradeTable');
+        if (!btTable) return;
+
+        // --- Sorting (single-click) ---
+        var btSortDir = {};
+        btTable.querySelectorAll('.bt-sortable').forEach(function(th) {
+            th.addEventListener('click', function() {
+                var col = this.dataset.col;
+                var colIdx = Array.from(this.parentNode.children).indexOf(this);
+                var tbody = btTable.querySelector('tbody');
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+
+                btSortDir[col] = btSortDir[col] === 'asc' ? 'desc' : 'asc';
+                var dir = btSortDir[col];
+
+                rows.sort(function(a, b) {
+                    var aVal = a.children[colIdx] ? a.children[colIdx].textContent.trim() : '';
+                    var bVal = b.children[colIdx] ? b.children[colIdx].textContent.trim() : '';
+                    var aNum = parseFloat(aVal);
+                    var bNum = parseFloat(bVal);
+                    if (!isNaN(aNum) && !isNaN(bNum)) {
+                        return dir === 'asc' ? aNum - bNum : bNum - aNum;
+                    }
+                    return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                });
+
+                rows.forEach(function(row, i) {
+                    row.children[0].textContent = i + 1;
+                    tbody.appendChild(row);
+                });
+
+                // Update sort icons
+                btTable.querySelectorAll('.bt-sortable i').forEach(function(icon) {
+                    icon.className = 'bi bi-chevron-expand ms-1';
+                    icon.style.opacity = '0.4';
+                });
+                var icon = this.querySelector('i');
+                icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
+                icon.style.opacity = '1';
+            });
+
+            // --- Column Statistics (double-click) ---
+            th.addEventListener('dblclick', function(e) {
+                e.preventDefault();
+                var col = this.dataset.col;
+                var colIdx = Array.from(this.parentNode.children).indexOf(this);
+                var tbody = btTable.querySelector('tbody');
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+
+                // Collect numeric values from this column
+                var values = [];
+                rows.forEach(function(row) {
+                    var cell = row.children[colIdx];
+                    if (cell) {
+                        var v = parseFloat(cell.textContent.trim());
+                        if (!isNaN(v)) values.push(v);
+                    }
+                });
+
+                if (values.length === 0) return;
+
+                // Compute stats
+                var sorted = values.slice().sort(function(a, b) { return a - b; });
+                var count = values.length;
+                var sum = values.reduce(function(a, b) { return a + b; }, 0);
+                var mean = sum / count;
+                var median = count % 2 === 0
+                    ? (sorted[count / 2 - 1] + sorted[count / 2]) / 2
+                    : sorted[Math.floor(count / 2)];
+                var min = sorted[0];
+                var max = sorted[count - 1];
+                var variance = values.reduce(function(acc, v) { return acc + (v - mean) * (v - mean); }, 0) / count;
+                var stdDev = Math.sqrt(variance);
+
+                // Build stats table
+                var statsHtml = [
+                    ['Count', count],
+                    ['Mean', mean.toFixed(4)],
+                    ['Median', median.toFixed(4)],
+                    ['Min', min.toFixed(4)],
+                    ['Max', max.toFixed(4)],
+                    ['Std Dev', stdDev.toFixed(4)]
+                ].map(function(r) {
+                    return '<tr><td class="text-muted" style="width:40%;">' + r[0] + '</td><td class="fw-semibold">' + r[1] + '</td></tr>';
+                }).join('');
+                document.getElementById('colStatsTitle').textContent = col + ' — Statistics';
+                document.getElementById('colStatsBody').innerHTML = statsHtml;
+
+                // Build histogram
+                var canvas = document.getElementById('colStatsChart');
+                var numBins = Math.min(15, Math.max(5, Math.ceil(Math.sqrt(count))));
+                var binWidth = (max - min) / numBins || 1;
+                var bins = new Array(numBins).fill(0);
+                var binLabels = [];
+                for (var b = 0; b < numBins; b++) {
+                    var lo = min + b * binWidth;
+                    var hi = lo + binWidth;
+                    binLabels.push(lo.toFixed(2));
+                    values.forEach(function(v) {
+                        if (b === numBins - 1 ? (v >= lo && v <= hi) : (v >= lo && v < hi)) bins[b]++;
+                    });
+                }
+
+                // Destroy previous chart instance if any
+                if (window._colStatsChartInstance) {
+                    window._colStatsChartInstance.destroy();
+                }
+                window._colStatsChartInstance = new Chart(canvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: binLabels,
+                        datasets: [{
+                            label: 'Frequency',
+                            data: bins,
+                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 } } },
+                            x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
+                        }
+                    }
+                });
+
+                var modal = new bootstrap.Modal(document.getElementById('colStatsModal'));
+                modal.show();
+            });
+        });
+    })();
 
     /* ═══════════════════════════════════════════════════════
        EQUITY CURVE — Dual-Mode Chart (backtest only)
@@ -1514,23 +1809,40 @@ document.addEventListener('DOMContentLoaded', function() {
 
     {% if not (is_optimization is defined and is_optimization) %}
     /* ═══════════════════════════════════════════════════════
-       CANDLESTICK CHART — Sprint 3 + Sprint 4
-       Supports: timeframe switching, indicator overlays,
-                 strategy-linked presets
+       TRADE CHART — Strategy-linked indicators with sub-pane
        ═══════════════════════════════════════════════════════ */
+    var strategyIndicatorConfigs = {{ indicator_configs | tojson }};
     var candlestickChart = null;
+    var tradeSubPaneChart = null;
+    var tradeCandleSeries = null;
+    var tradeVolumeSeries = null;
+    var tradeMainSeries = {};
+    var tradeSubPaneSeries = {};
     var candlestickModal = null;
     var currentTradeContext = null;
     var currentInterval = 60;
+    var tradeTooltipState = { time: null, ohlc: null, volume: null, mainItems: [], subItems: [] };
 
     var INTERVAL_LABELS = {60: '1-min', 300: '5-min', 600: '10-min', 86400: 'Daily'};
-    var INDICATOR_COLORS = ['#FF6D00', '#2979FF', '#00E676', '#D500F9', '#FF1744', '#00BCD4'];
+
+    function fmtPrice(v) { return v != null ? v.toFixed(2) : '--'; }
+    function fmtNum(v) { return v != null ? v.toFixed(2) : '--'; }
+    function fmtVol(v) {
+        if (v == null) return '--';
+        if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+        if (v >= 1e3) return (v / 1e3).toFixed(1) + 'K';
+        return v.toString();
+    }
+    function escHtml(s) {
+        var d = document.createElement('div');
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
 
     // --- Trade row click handler ---
     document.querySelectorAll('.trade-row-clickable').forEach(function(row) {
         row.addEventListener('click', function(e) {
             if (e.target.closest('a, button')) return;
-
             var symbol = this.dataset.symbol;
             var entryDate = this.dataset.entryDate;
             var exitDate = this.dataset.exitDate;
@@ -1539,9 +1851,7 @@ document.addEventListener('DOMContentLoaded', function() {
             var tradeType = this.dataset.tradeType;
             var tradeIndex = this.dataset.tradeIndex;
             var profit = parseFloat(this.dataset.profit) || 0;
-
             if (!symbol || !entryDate || !exitDate) return;
-
             showCandlestickChart(symbol, entryDate, exitDate, entryPrice, exitPrice, tradeType, tradeIndex, profit);
         });
     });
@@ -1564,30 +1874,14 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // --- Strategy Preset button ---
-    var btnPreset = document.getElementById('btnLoadPreset');
-    var runCtx = document.getElementById('runContext');
-    if (btnPreset && runCtx && runCtx.dataset.runId) {
-        btnPreset.addEventListener('click', function() {
-            fetch('/api/run/' + runCtx.dataset.runId + '/indicators')
-                .then(function(r) { return r.json(); })
-                .then(function(data) {
-                    if (data.indicators && data.indicators.length > 0) {
-                        applyIndicatorPreset(data.indicators);
-                    }
-                })
-                .catch(function(err) {
-                    console.error('Failed to load strategy presets:', err);
-                });
-        });
-    }
-
     function getActiveIndicators() {
         var indicators = [];
         document.querySelectorAll('.indicator-toggle:checked').forEach(function(el) {
             indicators.push({
                 type: el.dataset.type,
-                params: JSON.parse(el.dataset.params)
+                params: JSON.parse(el.dataset.params),
+                overlay: el.dataset.overlay === 'true',
+                color: el.dataset.color || '#FF6D00'
             });
         });
         return indicators;
@@ -1605,7 +1899,6 @@ document.addEventListener('DOMContentLoaded', function() {
             candlestickModal = new bootstrap.Modal(document.getElementById('candlestickModal'));
         }
 
-        // Reset UI
         document.getElementById('chartTradeTitle').textContent = symbol + ' \u2014 Trade #' + tradeIndex;
         document.getElementById('chartDirection').textContent = tradeType;
         document.getElementById('chartEntryInfo').textContent = entryPrice.toFixed(1) + ' @ ' + entryDate;
@@ -1615,7 +1908,6 @@ document.addEventListener('DOMContentLoaded', function() {
         pnlEl.textContent = (profit >= 0 ? '+' : '') + profit.toFixed(2);
         pnlEl.className = profit >= 0 ? 'text-success fw-bold' : 'text-danger fw-bold';
 
-        // Reset TF buttons to 1m
         document.querySelectorAll('#tfSelector .btn').forEach(function(b) {
             b.classList.toggle('active', b.dataset.interval === '60');
         });
@@ -1628,31 +1920,35 @@ document.addEventListener('DOMContentLoaded', function() {
         var ctx = currentTradeContext;
         if (!ctx) return;
 
-        // Prepare loading state
         var container = document.getElementById('candlestickChartContainer');
-        if (candlestickChart) {
-            candlestickChart.remove();
-            candlestickChart = null;
-        }
+        if (candlestickChart) { candlestickChart.remove(); candlestickChart = null; }
+        if (tradeSubPaneChart) { tradeSubPaneChart.remove(); tradeSubPaneChart = null; }
+        tradeMainSeries = {};
+        tradeSubPaneSeries = {};
+        document.getElementById('tradeSubPaneCard').style.display = 'none';
+        document.getElementById('tradeDataTooltip').classList.remove('visible');
+
         var loadingEl = document.getElementById('chartLoading');
         container.innerHTML = '';
         container.appendChild(loadingEl);
         loadingEl.style.display = 'flex';
         document.getElementById('chartError').classList.add('d-none');
 
-        // Update footer label
         document.getElementById('chartIntervalLabel').textContent =
             (INTERVAL_LABELS[interval] || interval + 's') + ' candlestick data from AmiBroker database';
 
-        // Build URL
         var activeIndicators = getActiveIndicators();
+        var apiConfigs = activeIndicators.map(function(c) {
+            return { type: c.type, params: c.params };
+        });
+
         var url = '/api/ohlcv/' + encodeURIComponent(ctx.symbol)
             + '?entry_date=' + encodeURIComponent(ctx.entryDate)
             + '&exit_date=' + encodeURIComponent(ctx.exitDate)
             + '&interval=' + interval;
 
-        if (activeIndicators.length > 0) {
-            url += '&indicators=' + encodeURIComponent(JSON.stringify(activeIndicators));
+        if (apiConfigs.length > 0) {
+            url += '&indicators=' + encodeURIComponent(JSON.stringify(apiConfigs));
         }
 
         fetch(url)
@@ -1662,22 +1958,29 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .then(function(data) {
                 loadingEl.style.display = 'none';
-
                 if (data.error) {
                     document.getElementById('chartErrorMsg').textContent = data.error;
                     document.getElementById('chartError').classList.remove('d-none');
                     return;
                 }
-
                 if (!data.data || data.data.length === 0) {
                     document.getElementById('chartErrorMsg').textContent = 'No bar data available for this date range.';
                     document.getElementById('chartError').classList.remove('d-none');
                     return;
                 }
 
+                // Merge overlay/color from toggle configs into API indicator results
+                var indicators = data.indicators || [];
+                indicators.forEach(function(ind) {
+                    var match = activeIndicators.find(function(c) { return c.type === ind.type; });
+                    if (match) {
+                        ind.overlay = match.overlay;
+                        ind.color = match.color;
+                    }
+                });
+
                 renderCandlestickChart(container, data.data, ctx.entryDate, ctx.exitDate,
-                                       ctx.entryPrice, ctx.exitPrice, ctx.tradeType,
-                                       data.indicators || []);
+                                       ctx.entryPrice, ctx.exitPrice, ctx.tradeType, indicators);
             })
             .catch(function(err) {
                 loadingEl.style.display = 'none';
@@ -1687,9 +1990,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function renderCandlestickChart(container, bars, entryDate, exitDate, entryPrice, exitPrice, tradeType, indicators) {
+        // Split indicators into overlay and sub-pane groups
+        var overlayInds = indicators.filter(function(i) { return i.overlay !== false && !i.error; });
+        var subPaneInds = indicators.filter(function(i) { return i.overlay === false && !i.error; });
+        var mainHeight = subPaneInds.length > 0 ? 310 : 400;
+
         candlestickChart = LightweightCharts.createChart(container, {
             width: container.clientWidth,
-            height: 400,
+            height: mainHeight,
             layout: {
                 background: { type: 'solid', color: '#ffffff' },
                 textColor: '#333',
@@ -1709,18 +2017,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Candlestick series
-        var candleSeries = candlestickChart.addCandlestickSeries({
-            upColor: '#26a69a',
-            downColor: '#ef5350',
-            borderDownColor: '#ef5350',
-            borderUpColor: '#26a69a',
-            wickDownColor: '#ef5350',
-            wickUpColor: '#26a69a',
+        tradeCandleSeries = candlestickChart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350',
+            borderDownColor: '#ef5350', borderUpColor: '#26a69a',
+            wickDownColor: '#ef5350', wickUpColor: '#26a69a',
         });
-        candleSeries.setData(bars);
+        tradeCandleSeries.setData(bars);
 
         // Volume histogram
-        var volumeSeries = candlestickChart.addHistogramSeries({
+        tradeVolumeSeries = candlestickChart.addHistogramSeries({
             color: 'rgba(76, 175, 80, 0.3)',
             priceFormat: { type: 'volume' },
             priceScaleId: 'volume',
@@ -1728,110 +2033,358 @@ document.addEventListener('DOMContentLoaded', function() {
         candlestickChart.priceScale('volume').applyOptions({
             scaleMargins: { top: 0.8, bottom: 0 },
         });
-        var volumeData = bars.map(function(b) {
+        tradeVolumeSeries.setData(bars.map(function(b) {
             return {
                 time: b.time,
                 value: b.volume || 0,
                 color: b.close >= b.open ? 'rgba(38,166,154,0.3)' : 'rgba(239,83,80,0.3)',
             };
-        });
-        volumeSeries.setData(volumeData);
+        }));
 
-        // --- Indicator overlays (Sprint 4) ---
-        var colorIdx = 0;
-        if (indicators && indicators.length > 0) {
-            indicators.forEach(function(ind) {
-                if (ind.error) return;
+        // --- Render overlay indicators on main chart ---
+        tradeRenderIndicatorSeries(candlestickChart, tradeMainSeries, overlayInds);
 
-                if (ind.type === 'bbands' && ind.series) {
-                    // Bollinger Bands: 3 lines
-                    var upperSeries = candlestickChart.addLineSeries({
-                        color: 'rgba(41, 121, 255, 0.5)',
-                        lineWidth: 1,
-                        lineStyle: 2,
-                        title: 'BB Upper',
-                    });
-                    upperSeries.setData(ind.series.upper);
-
-                    var middleSeries = candlestickChart.addLineSeries({
-                        color: 'rgba(41, 121, 255, 0.8)',
-                        lineWidth: 1,
-                        title: 'BB Mid',
-                    });
-                    middleSeries.setData(ind.series.middle);
-
-                    var lowerSeries = candlestickChart.addLineSeries({
-                        color: 'rgba(41, 121, 255, 0.5)',
-                        lineWidth: 1,
-                        lineStyle: 2,
-                        title: 'BB Lower',
-                    });
-                    lowerSeries.setData(ind.series.lower);
-                } else if (ind.data) {
-                    // Single-line indicator (SMA, EMA)
-                    var color = INDICATOR_COLORS[colorIdx % INDICATOR_COLORS.length];
-                    colorIdx++;
-                    var lineSeries = candlestickChart.addLineSeries({
-                        color: color,
-                        lineWidth: 2,
-                        title: ind.label || ind.type,
-                    });
-                    lineSeries.setData(ind.data);
-                }
-            });
+        // --- Create sub-pane for non-overlay indicators ---
+        if (subPaneInds.length > 0) {
+            tradeCreateSubPane(subPaneInds, bars);
         }
 
-        // Entry / exit markers
+        // --- Entry / exit markers ---
         var markers = [];
         var entryTime = findClosestBarTime(bars, entryDate);
         var exitTime = findClosestBarTime(bars, exitDate);
-
         if (entryTime) {
             markers.push({
-                time: entryTime,
-                position: 'belowBar',
-                color: '#2196F3',
-                shape: 'arrowUp',
-                text: 'Entry @ ' + entryPrice.toFixed(1),
+                time: entryTime, position: 'belowBar', color: '#2196F3',
+                shape: 'arrowUp', text: 'Entry @ ' + entryPrice.toFixed(1),
             });
         }
         if (exitTime) {
             markers.push({
-                time: exitTime,
-                position: 'aboveBar',
-                color: '#FF9800',
-                shape: 'arrowDown',
-                text: 'Exit @ ' + exitPrice.toFixed(1),
+                time: exitTime, position: 'aboveBar', color: '#FF9800',
+                shape: 'arrowDown', text: 'Exit @ ' + exitPrice.toFixed(1),
             });
         }
         if (markers.length > 0) {
             markers.sort(function(a, b) { return a.time - b.time; });
-            candleSeries.setMarkers(markers);
+            tradeCandleSeries.setMarkers(markers);
         }
 
-        // Auto-resize on container resize
+        // --- Data tooltip: crosshair tracking on main chart ---
+        candlestickChart.subscribeCrosshairMove(function(param) {
+            if (!param.time || !param.point) {
+                tradeTooltipState.time = null;
+                updateTradeDataTooltip();
+                return;
+            }
+            tradeTooltipState.time = param.time;
+            tradeTooltipState.ohlc = null;
+            tradeTooltipState.volume = null;
+            tradeTooltipState.mainItems = [];
+            if (param.seriesData) {
+                param.seriesData.forEach(function(val, series) {
+                    if (series === tradeCandleSeries && val) {
+                        tradeTooltipState.ohlc = val;
+                    } else if (series === tradeVolumeSeries && val) {
+                        tradeTooltipState.volume = val.value;
+                    } else if (series._tooltipName && val && val.value !== undefined) {
+                        tradeTooltipState.mainItems.push({
+                            name: series._tooltipName, value: val.value,
+                            color: series._tooltipColor || '#aaa'
+                        });
+                    }
+                });
+            }
+            // Update sub-pane indicator values from main chart crosshair
+            if (tradeSubPaneChart) {
+                tradeTooltipState.subItems = [];
+                var subCoord = tradeSubPaneChart.timeScale().timeToCoordinate(param.time);
+                var logIdx = subCoord !== null
+                    ? tradeSubPaneChart.timeScale().coordinateToLogical(subCoord)
+                    : candlestickChart.timeScale().coordinateToLogical(param.point.x);
+                Object.keys(tradeSubPaneSeries).forEach(function(key) {
+                    var s = tradeSubPaneSeries[key];
+                    if (!s || !s._tooltipName) return;
+                    try {
+                        var dp = s.dataByIndex(logIdx);
+                        if (dp && dp.value !== undefined) {
+                            tradeTooltipState.subItems.push({
+                                name: s._tooltipName, value: dp.value,
+                                color: s._tooltipColor || '#aaa',
+                            });
+                        }
+                    } catch(e) {}
+                });
+            }
+            updateTradeDataTooltip();
+        });
+
+        // --- Auto-resize ---
         var resizeObserver = new ResizeObserver(function(entries) {
             for (var entry of entries) {
                 candlestickChart.applyOptions({ width: entry.contentRect.width });
+                if (tradeSubPaneChart) tradeSubPaneChart.applyOptions({ width: entry.contentRect.width });
             }
         });
         resizeObserver.observe(container);
 
         document.getElementById('candlestickModal').addEventListener('hidden.bs.modal', function() {
             resizeObserver.disconnect();
+            document.getElementById('tradeDataTooltip').classList.remove('visible');
         }, { once: true });
 
         candlestickChart.timeScale().fitContent();
     }
 
+    // --- Render indicator line series on a chart ---
+    function tradeRenderIndicatorSeries(chart, seriesMap, indicators) {
+        indicators.forEach(function(ind) {
+            if (ind.error) return;
+            var color = ind.color || '#FF6D00';
+
+            if (ind.series) {
+                Object.keys(ind.series).forEach(function(key) {
+                    var lineData = ind.series[key];
+                    if (!lineData || lineData.length === 0) return;
+
+                    var lineColor = color, lineWidth = 2, lineStyle = 0;
+                    if (key === 'upper1' || key === 'lower1' || key === 'upper' || key === 'lower') {
+                        lineWidth = 1; lineStyle = 2;
+                    }
+                    if (key === 'upper2' || key === 'lower2') { lineWidth = 1; lineStyle = 3; }
+                    if (key === 'middle' || key === 'vwap' || key === 'adx' || key === 'k') { lineWidth = 2; }
+                    if (key === 'plus_di') lineColor = '#00C853';
+                    if (key === 'minus_di') lineColor = '#FF1744';
+                    if (key === 'd') { lineColor = '#FF9800'; lineStyle = 2; }
+                    if (key === 'first_deriv') { lineColor = '#FF5722'; lineWidth = 2; }
+                    if (key === 'second_deriv') { lineColor = '#E040FB'; lineWidth = 1; lineStyle = 2; }
+
+                    var seriesTitle = ind.type.toUpperCase() + ' ' + key;
+                    var series = chart.addLineSeries({
+                        color: lineColor, lineWidth: lineWidth, lineStyle: lineStyle,
+                        title: seriesTitle,
+                        lastValueVisible: false, priceLineVisible: false,
+                    });
+                    series._tooltipName = seriesTitle;
+                    series._tooltipColor = lineColor;
+                    series.setData(lineData);
+                    seriesMap[ind.type + '_' + key] = series;
+                });
+            } else if (ind.data) {
+                var seriesTitle = ind.label || ind.type.toUpperCase();
+                var series = chart.addLineSeries({
+                    color: color, lineWidth: 2,
+                    title: seriesTitle,
+                    lastValueVisible: false, priceLineVisible: false,
+                });
+                series._tooltipName = seriesTitle;
+                series._tooltipColor = color;
+                series.setData(ind.data);
+                seriesMap[ind.type] = series;
+            }
+        });
+    }
+
+    // --- Create sub-pane chart for non-overlay indicators ---
+    function tradeCreateSubPane(subIndicators, bars) {
+        var card = document.getElementById('tradeSubPaneCard');
+        card.style.display = 'block';
+        var labels = subIndicators.map(function(i) { return i.type.toUpperCase(); });
+        document.getElementById('tradeSubPaneLabel').textContent = labels.join(' / ');
+
+        var spContainer = document.getElementById('tradeSubPaneChart');
+        tradeSubPaneChart = LightweightCharts.createChart(spContainer, {
+            width: spContainer.clientWidth,
+            height: 150,
+            layout: {
+                background: { type: 'solid', color: '#fafafa' },
+                textColor: '#333', fontSize: 10,
+            },
+            grid: {
+                vertLines: { color: 'rgba(197, 203, 206, 0.3)' },
+                horzLines: { color: 'rgba(197, 203, 206, 0.3)' },
+            },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.8)' },
+            timeScale: {
+                borderColor: 'rgba(197, 203, 206, 0.8)',
+                timeVisible: true, secondsVisible: false,
+            },
+        });
+
+        // Render sub-pane indicator series
+        tradeRenderIndicatorSeries(tradeSubPaneChart, tradeSubPaneSeries, subIndicators);
+
+        // Threshold lines
+        subIndicators.forEach(function(ind) {
+            if (ind.type === 'rsi') {
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_ob', 70, '#FF174480', bars);
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_os', 30, '#00C85380', bars);
+            }
+            if (ind.type === 'stochastic') {
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_ob', 80, '#FF174480', bars);
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_os', 20, '#00C85380', bars);
+            }
+            if (ind.type === 'derivative') {
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'deriv_zero', 0, '#9E9E9E80', bars);
+            }
+        });
+
+        // Sync time scales between main and sub-pane
+        var syncingTimeScale = false;
+        candlestickChart.timeScale().subscribeVisibleLogicalRangeChange(function() {
+            if (syncingTimeScale) return;
+            syncingTimeScale = true;
+            try {
+                var range = candlestickChart.timeScale().getVisibleRange();
+                if (range && tradeSubPaneChart) tradeSubPaneChart.timeScale().setVisibleRange(range);
+            } catch(e) {}
+            syncingTimeScale = false;
+        });
+        tradeSubPaneChart.timeScale().subscribeVisibleLogicalRangeChange(function() {
+            if (syncingTimeScale) return;
+            syncingTimeScale = true;
+            try {
+                var range = tradeSubPaneChart.timeScale().getVisibleRange();
+                if (range && candlestickChart) candlestickChart.timeScale().setVisibleRange(range);
+            } catch(e) {}
+            syncingTimeScale = false;
+        });
+
+        // Sync crosshairs
+        var syncingCrosshair = false;
+        candlestickChart.subscribeCrosshairMove(function(param) {
+            if (syncingCrosshair || !tradeSubPaneChart) return;
+            syncingCrosshair = true;
+            if (!param.time || !param.point) {
+                tradeSubPaneChart.clearCrosshairPosition();
+            } else {
+                var subKeys = Object.keys(tradeSubPaneSeries);
+                if (subKeys.length > 0) {
+                    var targetSeries = tradeSubPaneSeries[subKeys[0]];
+                    var subPrice = 0;
+                    try {
+                        var coord = tradeSubPaneChart.timeScale().timeToCoordinate(param.time);
+                        if (coord !== null) {
+                            var li = tradeSubPaneChart.timeScale().coordinateToLogical(coord);
+                            var dp0 = targetSeries.dataByIndex(li);
+                            if (dp0 && dp0.value !== undefined) subPrice = dp0.value;
+                        }
+                    } catch(e) {}
+                    tradeSubPaneChart.setCrosshairPosition(subPrice, param.time, targetSeries);
+                }
+            }
+            syncingCrosshair = false;
+        });
+        tradeSubPaneChart.subscribeCrosshairMove(function(param) {
+            if (syncingCrosshair || !candlestickChart) return;
+            syncingCrosshair = true;
+            if (!param.time || !param.point) {
+                candlestickChart.clearCrosshairPosition();
+            } else if (tradeCandleSeries) {
+                var price = 0;
+                try {
+                    var coord = candlestickChart.timeScale().timeToCoordinate(param.time);
+                    if (coord !== null) {
+                        var li = candlestickChart.timeScale().coordinateToLogical(coord);
+                        var dp = tradeCandleSeries.dataByIndex(li);
+                        if (dp && dp.close !== undefined) price = dp.close;
+                    }
+                } catch(e) {}
+                candlestickChart.setCrosshairPosition(price, param.time, tradeCandleSeries);
+            }
+            syncingCrosshair = false;
+        });
+
+        // Sub-pane tooltip updates
+        tradeSubPaneChart.subscribeCrosshairMove(function(param) {
+            tradeTooltipState.subItems = [];
+            if (param.seriesData) {
+                param.seriesData.forEach(function(val, series) {
+                    if (series._tooltipName && val && val.value !== undefined) {
+                        tradeTooltipState.subItems.push({
+                            name: series._tooltipName, value: val.value,
+                            color: series._tooltipColor || '#aaa'
+                        });
+                    }
+                });
+            }
+            updateTradeDataTooltip();
+        });
+
+        tradeSubPaneChart.timeScale().fitContent();
+    }
+
+    function tradeAddHLine(chart, seriesMap, key, value, color, bars) {
+        if (seriesMap[key]) return;
+        if (!bars || bars.length === 0) return;
+        var ld = [
+            { time: bars[0].time, value: value },
+            { time: bars[bars.length - 1].time, value: value }
+        ];
+        var s = chart.addLineSeries({
+            color: color, lineWidth: 1, lineStyle: 2,
+            lastValueVisible: false, priceLineVisible: false,
+        });
+        s.setData(ld);
+        seriesMap[key] = s;
+    }
+
+    function updateTradeDataTooltip() {
+        var el = document.getElementById('tradeDataTooltip');
+        if (!tradeTooltipState.time) {
+            el.classList.remove('visible');
+            return;
+        }
+
+        var html = '';
+        var t = tradeTooltipState.time;
+        var date = new Date(t * 1000);
+        var timeStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        if (currentInterval < 86400) {
+            timeStr += '  ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+        html += '<div class="tt-time">' + timeStr + '</div>';
+
+        if (tradeTooltipState.ohlc) {
+            var o = tradeTooltipState.ohlc;
+            var cls = o.close >= o.open ? 'tt-up' : 'tt-down';
+            html += '<div class="tt-row"><span class="tt-label">O</span><span class="tt-val ' + cls + '">' + fmtPrice(o.open) + '</span></div>';
+            html += '<div class="tt-row"><span class="tt-label">H</span><span class="tt-val ' + cls + '">' + fmtPrice(o.high) + '</span></div>';
+            html += '<div class="tt-row"><span class="tt-label">L</span><span class="tt-val ' + cls + '">' + fmtPrice(o.low) + '</span></div>';
+            html += '<div class="tt-row"><span class="tt-label">C</span><span class="tt-val ' + cls + '">' + fmtPrice(o.close) + '</span></div>';
+        }
+
+        if (tradeTooltipState.volume != null) {
+            html += '<div class="tt-row"><span class="tt-label">Vol</span><span class="tt-val">' + fmtVol(tradeTooltipState.volume) + '</span></div>';
+        }
+
+        if (tradeTooltipState.mainItems.length > 0) {
+            html += '<div class="tt-divider"></div>';
+            tradeTooltipState.mainItems.forEach(function(item) {
+                html += '<div class="tt-row"><span class="tt-label">' + escHtml(item.name) + '</span>' +
+                    '<span class="tt-val" style="color:' + item.color + ';">' + fmtPrice(item.value) + '</span></div>';
+            });
+        }
+
+        if (tradeTooltipState.subItems.length > 0) {
+            html += '<div class="tt-divider"></div>';
+            tradeTooltipState.subItems.forEach(function(item) {
+                html += '<div class="tt-row"><span class="tt-label">' + escHtml(item.name) + '</span>' +
+                    '<span class="tt-val" style="color:' + item.color + ';">' + fmtNum(item.value) + '</span></div>';
+            });
+        }
+
+        el.innerHTML = html;
+        el.classList.add('visible');
+    }
+
     function findClosestBarTime(bars, dateStr) {
         var targetDate = new Date(dateStr);
         if (isNaN(targetDate.getTime())) return null;
-
         var targetTs = Math.floor(targetDate.getTime() / 1000);
         var closest = null;
         var closestDiff = Infinity;
-
         for (var i = 0; i < bars.length; i++) {
             var diff = Math.abs(bars[i].time - targetTs);
             if (diff < closestDiff) {
@@ -1841,55 +2394,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return closest;
     }
-
-    // --- Strategy Preset: apply indicator configs from AFL ---
-    function applyIndicatorPreset(presetIndicators) {
-        // Uncheck all current toggles
-        document.querySelectorAll('.indicator-toggle').forEach(function(el) {
-            el.checked = false;
-        });
-
-        presetIndicators.forEach(function(preset) {
-            var found = false;
-            document.querySelectorAll('.indicator-toggle').forEach(function(el) {
-                if (el.dataset.type === preset.type && !found) {
-                    el.dataset.params = JSON.stringify(preset.params);
-                    el.checked = true;
-                    var label = el.nextElementSibling;
-                    if (label) {
-                        label.textContent = preset.type.toUpperCase() + '(' +
-                            Object.values(preset.params).join(', ') + ')';
-                    }
-                    found = true;
-                }
-            });
-
-            if (!found) {
-                addDynamicIndicatorToggle(preset);
-            }
-        });
-
-        loadChartData(currentInterval);
-    }
-
-    function addDynamicIndicatorToggle(preset) {
-        var container = document.getElementById('indicatorToggles');
-        var id = 'indDyn_' + preset.type + '_' + Math.random().toString(36).substr(2, 5);
-        var paramStr = Object.values(preset.params).join(', ');
-        var div = document.createElement('div');
-        div.className = 'form-check form-check-inline form-switch mb-0';
-        div.innerHTML = '<input class="form-check-input indicator-toggle" type="checkbox" checked ' +
-            'id="' + id + '" data-type="' + preset.type + '" ' +
-            "data-params='" + JSON.stringify(preset.params) + "'>" +
-            '<label class="form-check-label" for="' + id + '" style="font-size: 0.78rem;">' +
-            preset.type.toUpperCase() + '(' + paramStr + ')</label>';
-        container.appendChild(div);
-
-        div.querySelector('.indicator-toggle').addEventListener('change', function() {
-            loadChartData(currentInterval);
-        });
-    }
-
 
     {% endif %}{# end backtest-only candlestick chart block #}
 

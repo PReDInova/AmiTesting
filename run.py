@@ -231,7 +231,7 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         AFL_STRATEGY_FILE.write_text(actual_afl, encoding="utf-8")
         logger.info("Wrote version AFL to %s (%d chars)", AFL_STRATEGY_FILE, len(actual_afl))
 
-    effective_symbol = symbol or GCZ25_SYMBOL
+    effective_symbol = symbol if symbol == "__ALL__" else (symbol or GCZ25_SYMBOL)
 
     run_id = create_run(
         version_id=version_id,
@@ -277,6 +277,22 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         else:
             logger.info("Optimization run but no Optimize() calls found — skipping tracker injection.")
 
+    # --- Custom metrics path injection ----------------------------------------
+    # If the AFL uses SetCustomBacktestProc("") with StaticVarGetText("d02_metrics_path"),
+    # inject the actual output path so the CBT writes the sidecar CSV.
+    custom_metrics_csv = output_dir / "custom_metrics.csv"
+    if actual_afl and 'StaticVarGetText("d02_metrics_path")' in actual_afl:
+        metrics_path_afl = (
+            '// ==== Custom Metrics Path ====\n'
+            'StaticVarSetText("d02_metrics_path", "' +
+            str(custom_metrics_csv.resolve()).replace("\\", "\\\\") +
+            '");\n'
+            '// ==== End Custom Metrics Path ====\n\n'
+        )
+        actual_afl = metrics_path_afl + actual_afl
+        AFL_STRATEGY_FILE.write_text(actual_afl, encoding="utf-8")
+        logger.info("Injected custom metrics path: %s", custom_metrics_csv)
+
     # Write a sentinel so the dashboard can discover the run_id early
     # (while the subprocess is still running).
     sentinel_path = RESULTS_DIR / ".current_run_id"
@@ -311,16 +327,28 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         # --- Step 1b: Build .apx file --------------------------------------
         logger.info("Step 1b — Building .apx file ...")
 
-        # Auto-detect periodicity from AFL content.  Strategies that use
-        # TimeFrameSet(in1Minute) are designed for tick data compressed to
-        # 1-minute bars — they need Periodicity=0 (Tick).  Without this,
-        # the session filter and timeframe compression fail silently,
-        # producing zero trades.
+        # Auto-detect periodicity and ApplyTo from AFL content.
+        #
+        # TimeFrameSet(in1Minute) → Periodicity=0 (Tick), data compressed in AFL.
+        # Name() == "..." symbol filter → ApplyTo=0 (all symbols) so AmiBroker
+        #   evaluates every ticker; the AFL filter handles the rest.
+        #   Also default to Periodicity=5 (1-minute) for symbol-filtered
+        #   strategies on native intraday data.
         afl_text_final = AFL_STRATEGY_FILE.read_text(encoding="utf-8")
         periodicity = None
         if "TimeFrameSet(" in afl_text_final:
             periodicity = 0  # Tick
             logger.info("AFL uses TimeFrameSet — setting Periodicity=0 (Tick)")
+
+        # Detect AFL symbol filters (e.g. Name() == "NQ") — requires ApplyTo=0
+        import re as _re
+        if _re.search(r'Name\(\)\s*==\s*"', afl_text_final):
+            if effective_symbol != "__ALL__":
+                effective_symbol = "__ALL__"
+                logger.info("AFL has Name() symbol filter — setting ApplyTo=0 (all symbols)")
+            if periodicity is None:
+                periodicity = 5  # 1-minute native
+                logger.info("No TimeFrameSet + symbol filter — defaulting to Periodicity=5 (1-min)")
 
         # Use a unique APX filename per run.  AmiBroker caches the formula
         # associated with an APX file across sessions; reusing the same
@@ -344,6 +372,37 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
             apx_path=str(run_apx_path), output_dir=str(output_dir), run_mode=run_mode
         )
         logger.info("Backtest completed.")
+
+        # --- Step 2b: Merge custom metrics sidecar CSV ---------------------
+        # If the AFL CBT wrote a custom_metrics.csv, merge it with results.csv
+        if custom_metrics_csv.exists():
+            try:
+                import pandas as pd
+
+                trades_csv = output_dir / "results.csv"
+                if trades_csv.exists():
+                    df_trades = pd.read_csv(trades_csv, encoding="utf-8")
+                    df_metrics = pd.read_csv(custom_metrics_csv, encoding="utf-8")
+                    logger.info(
+                        "Merging custom metrics: %d trade rows, %d metric rows",
+                        len(df_trades), len(df_metrics),
+                    )
+
+                    if len(df_metrics) == len(df_trades):
+                        # Same row count — merge by position (trade order matches)
+                        for col in df_metrics.columns:
+                            if col != "EntryDate":
+                                df_trades[col] = df_metrics[col].values
+                        df_trades.to_csv(trades_csv, index=False, encoding="utf-8")
+                        logger.info("Merged %d custom columns into results.csv",
+                                    len(df_metrics.columns) - 1)
+                    else:
+                        logger.warning(
+                            "Row count mismatch (%d trades vs %d metrics) — "
+                            "skipping merge", len(df_trades), len(df_metrics)
+                        )
+            except Exception as exc:
+                logger.warning("Custom metrics merge failed: %s", exc)
 
         # --- Step 3: Update run record -------------------------------------
         now = datetime.now(timezone.utc).isoformat()

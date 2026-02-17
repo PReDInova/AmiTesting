@@ -79,9 +79,12 @@ _batch_lock = threading.Lock()
 
 @app.context_processor
 def inject_backtest_state():
-    """Make backtest_running available to all templates (for navbar spinner)."""
+    """Make backtest_running and default_symbol available to all templates."""
     with _backtest_lock:
-        return {"backtest_running": _backtest_state["running"]}
+        return {
+            "backtest_running": _backtest_state["running"],
+            "default_symbol": GCZ25_SYMBOL,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +125,9 @@ from scripts.strategy_db import (
     upsert_indicator_tooltip as db_upsert_indicator_tooltip,
     delete_indicator_tooltip as db_delete_indicator_tooltip,
     reconstruct_optimization_parsed,
+    find_strategy_by_name as db_find_strategy_by_name,
 )
+from scripts.afl_reverser import reverse_afl
 
 init_db()
 seed_default_strategies()
@@ -987,6 +992,8 @@ def results_detail(filename: str):
         db_configured=bool(AMIBROKER_DB_PATH),
         run=None,
         is_optimization=parsed.get("is_optimization", False),
+        indicator_configs=[],
+        symbol_runs={},
     )
 
 
@@ -1054,6 +1061,22 @@ def run_detail(run_id: str):
     strategy = run.get("strategy") or get_strategy_info(run["strategy_id"])
     version = run.get("version")
 
+    # Extract strategy indicator configs from AFL for the trade chart modal
+    from scripts.afl_parser import extract_strategy_indicators
+
+    _afl = run.get("afl_content") or (version.get("afl_content", "") if version else "")
+    indicator_configs = extract_strategy_indicators(_afl) if _afl else []
+
+    # Build symbol switcher: other completed runs of this strategy on different symbols
+    symbol_runs = {}
+    sibling_runs = db_list_runs(strategy_id=run["strategy_id"])
+    for r in sibling_runs:
+        if r.get("status") != "completed":
+            continue
+        sym = r.get("symbol") or GCZ25_SYMBOL
+        if sym not in symbol_runs:
+            symbol_runs[sym] = {"run_id": r["id"], "symbol": sym}
+
     return render_template(
         "results_detail.html",
         filename=csv_filename,
@@ -1068,6 +1091,8 @@ def run_detail(run_id: str):
         run=run,
         is_optimization=is_optimization,
         default_symbol=GCZ25_SYMBOL,
+        symbol_runs=symbol_runs,
+        indicator_configs=indicator_configs,
     )
 
 
@@ -1128,6 +1153,70 @@ def strategy_create():
     strategy_id = db_create_strategy(name=name, summary=summary, symbol=symbol)
     flash(f"Strategy '{name}' created.", "success")
     return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+
+@app.route("/strategy/reverse", methods=["POST"])
+def strategy_reverse():
+    """Create a reversed copy of a strategy (Buy<->Short, Sell<->Cover) and run backtest."""
+    run_id = request.form.get("run_id", "").strip()
+    if not run_id:
+        flash("No run specified for reversal.", "danger")
+        return redirect(url_for("index"))
+
+    run = get_run_with_context(run_id)
+    if run is None:
+        flash(f"Run '{run_id}' not found.", "danger")
+        return redirect(url_for("index"))
+
+    # Get AFL content from the run or its version
+    version = run.get("version")
+    afl_content = run.get("afl_content") or (version.get("afl_content", "") if version else "")
+    if not afl_content.strip():
+        flash("No AFL content available to reverse.", "danger")
+        return redirect(url_for("run_detail", run_id=run_id))
+
+    # Compute reversed strategy name
+    original_strategy = run.get("strategy") or {}
+    original_name = original_strategy.get("name", "Unknown")
+    reversed_name = f"{original_name}_reverse"
+
+    # Reverse the AFL
+    reversed_afl = reverse_afl(afl_content)
+
+    # Find or create the reversed strategy
+    existing = db_find_strategy_by_name(reversed_name)
+    if existing:
+        strategy_id = existing["id"]
+    else:
+        strategy_id = db_create_strategy(
+            name=reversed_name,
+            summary=f"Reversed signals from: {original_name}",
+            description=f"Auto-generated reversed strategy. Buy/Short and Sell/Cover signals swapped from {original_name}.",
+            symbol=original_strategy.get("symbol", ""),
+        )
+
+    # Create a new version with the reversed AFL
+    version_id = db_create_version(
+        strategy_id=strategy_id,
+        afl_content=reversed_afl,
+        label="Reversed signals",
+    )
+
+    # Launch backtest in background
+    with _backtest_lock:
+        if _backtest_state["running"]:
+            flash(f"Reversed strategy '{reversed_name}' created but a backtest is already running.", "warning")
+            return redirect(url_for("strategy_detail", strategy_id=strategy_id))
+
+    symbol = run.get("symbol") or None
+    thread = threading.Thread(
+        target=_run_backtest_background,
+        args=(strategy_id, version_id, None, symbol),
+        daemon=True,
+    )
+    thread.start()
+    flash(f"Reversed strategy '{reversed_name}' created. Backtest started.", "info")
+    return redirect(url_for("backtest_status_page"))
 
 
 @app.route("/strategy/<strategy_id>/version/create", methods=["POST"])
@@ -1576,11 +1665,22 @@ def backtest_status_page():
             if not state.get("finished_at"):
                 state["finished_at"] = run_record.get("completed_at",
                     datetime.now(timezone.utc).isoformat())
+    # Look up run record for symbol/strategy context (for "Run Again" form)
+    run_symbol = ""
+    run_strategy_id = ""
+    if state.get("run_id"):
+        run_record = db_get_run(state["run_id"])
+        if run_record:
+            run_symbol = run_record.get("symbol", "")
+            run_strategy_id = run_record.get("strategy_id", "")
+
     return render_template(
         "backtest_status.html",
         state=state,
         log_content=log_content,
         is_optimization=state.get("is_optimization", False),
+        run_symbol=run_symbol,
+        run_strategy_id=run_strategy_id,
     )
 
 
@@ -1594,14 +1694,21 @@ def api_backtest_status():
 
 @app.route("/api/symbols")
 def api_symbols():
-    """Return available symbols from the AmiBroker database."""
+    """Return available symbols from the AmiBroker database (cached)."""
     try:
-        from scripts.ole_backtest import list_symbols
-        symbols = list_symbols()
+        from scripts.ole_backtest import get_cached_symbols
+        refresh = request.args.get("refresh") == "1"
+        result = get_cached_symbols(refresh=refresh)
+        # Filter out AmiBroker internal symbols (~~~EQUITY, etc.)
+        symbols = [s for s in result["symbols"] if not s.startswith("~~~")]
+        return jsonify({
+            "symbols": symbols,
+            "default": GCZ25_SYMBOL,
+            "stale": result["stale"],
+        })
     except Exception as exc:
-        logger.warning("Failed to list symbols from AmiBroker: %s", exc)
-        symbols = []
-    return jsonify({"symbols": symbols, "default": GCZ25_SYMBOL})
+        logger.warning("Failed to list symbols: %s", exc)
+        return jsonify({"symbols": [], "default": GCZ25_SYMBOL, "stale": True})
 
 
 @app.route("/api/run/<run_id>/opt-progress")
@@ -2209,12 +2316,14 @@ def strategy_explore(strategy_id: str):
     description = strategy.get("description", "") if strategy else ""
     code_map = build_code_map(description, afl_content) if afl_content else []
 
+    explore_symbol = request.args.get("symbol") or GCZ25_SYMBOL
+
     return render_template(
         "indicator_explorer.html",
         strategy=strategy,
         params=params,
         indicator_configs=indicator_configs,
-        symbol=GCZ25_SYMBOL,
+        symbol=explore_symbol,
         afl_content=afl_content,
         code_map=code_map,
         db_configured=bool(AMIBROKER_DB_PATH),
@@ -2227,8 +2336,12 @@ def api_strategy_explorer_data(strategy_id: str):
 
     Query parameters:
         interval  -- bar interval in seconds (default 60)
+        symbol    -- ticker symbol to fetch data for (default GCZ25_SYMBOL)
         param_*   -- strategy parameter overrides (e.g. param_TEMA Length=30)
     """
+    import time as _perf_time
+    _t_total_start = _perf_time.perf_counter()
+
     from scripts.ole_stock_data import get_latest_bars
     from scripts.indicators import compute_indicators
     from scripts.afl_parser import parse_afl_params, extract_strategy_indicators
@@ -2272,6 +2385,7 @@ def api_strategy_explorer_data(strategy_id: str):
             except ValueError:
                 pass
 
+    _t_afl_parse_start = _perf_time.perf_counter()
     # Get indicator configs from AFL
     indicator_configs = extract_strategy_indicators(afl_content)
 
@@ -2281,21 +2395,28 @@ def api_strategy_explorer_data(strategy_id: str):
         for ind_param, afl_param_name in mapping.items():
             if afl_param_name in param_overrides:
                 cfg["params"][ind_param] = param_overrides[afl_param_name]
+    _t_afl_parse_ms = (_perf_time.perf_counter() - _t_afl_parse_start) * 1000
+
+    # Resolve symbol from query string (default to GCZ25_SYMBOL)
+    explore_symbol = request.args.get("symbol") or GCZ25_SYMBOL
 
     # Fetch OHLCV bars -- use get_latest_bars with days-based filtering
     from datetime import datetime
 
-    cache_key = (strategy_id, interval, days, end_date)
+    cache_key = (strategy_id, explore_symbol, interval, days, end_date)
     cached = _explorer_bars_cache.get(cache_key)
 
     data_range = None
+    _bar_source = "cache"
+    _t_bars_start = _perf_time.perf_counter()
     if cached and (datetime.now() - cached["fetched_at"]).total_seconds() < 300:
         # Use cached bars (valid for 5 minutes)
         bars = cached["bars"]
         data_range = cached.get("data_range")
     else:
+        _bar_source = "amiBroker_COM"
         result = get_latest_bars(
-            symbol=GCZ25_SYMBOL,
+            symbol=explore_symbol,
             interval=interval,
             days=days,
             end_date=end_date,
@@ -2309,6 +2430,7 @@ def api_strategy_explorer_data(strategy_id: str):
             "data_range": data_range,
             "fetched_at": datetime.now(),
         }
+    _t_bars_ms = (_perf_time.perf_counter() - _t_bars_start) * 1000
 
     if not bars:
         return jsonify({
@@ -2317,6 +2439,7 @@ def api_strategy_explorer_data(strategy_id: str):
         }), 404
 
     # Compute indicators
+    _t_indicators_start = _perf_time.perf_counter()
     ind_configs_for_compute = [
         {"type": cfg["type"], "params": cfg["params"]}
         for cfg in indicator_configs
@@ -2328,17 +2451,26 @@ def api_strategy_explorer_data(strategy_id: str):
         if i < len(indicator_configs):
             ind["overlay"] = indicator_configs[i].get("overlay", True)
             ind["color"] = indicator_configs[i].get("color", "#FF6D00")
+    _t_indicators_ms = (_perf_time.perf_counter() - _t_indicators_start) * 1000
 
-    # Compute signals
-    from scripts.signal_evaluator import evaluate_signals
-    signals = evaluate_signals(afl_content, bars, indicator_configs, param_overrides)
+    _t_total_ms = (_perf_time.perf_counter() - _t_total_start) * 1000
+    _timing = {
+        "total_ms": round(_t_total_ms, 1),
+        "afl_parse_ms": round(_t_afl_parse_ms, 1),
+        "bar_fetch_ms": round(_t_bars_ms, 1),
+        "bar_source": _bar_source,
+        "bar_count": len(bars),
+        "indicator_compute_ms": round(_t_indicators_ms, 1),
+        "indicator_count": len(computed),
+    }
+    app.logger.info("explorer-data timing: %s", _timing)
 
     return jsonify({
         "bars": bars,
         "indicators": computed,
         "indicator_configs": indicator_configs,
-        "signals": signals,
         "data_range": data_range,
+        "_timing": _timing,
     })
 
 
@@ -2366,14 +2498,15 @@ def api_strategy_recalculate(strategy_id: str):
     interval = body.get("interval", 60)
     days = body.get("days", CHART_SETTINGS.get("explorer_default_days", 5))
     end_date = body.get("end_date")  # may be None
+    recalc_symbol = body.get("symbol") or GCZ25_SYMBOL
 
     # Get cached bars -- cache key must match what explorer-data used
-    cache_key = (strategy_id, interval, days, end_date)
+    cache_key = (strategy_id, recalc_symbol, interval, days, end_date)
     cached = _explorer_bars_cache.get(cache_key)
     if not cached or not cached.get("bars"):
-        # Fallback: try to find any cached bars for this strategy+interval
+        # Fallback: try to find any cached bars for this strategy+symbol
         for k, v in _explorer_bars_cache.items():
-            if k[0] == strategy_id and k[1] == interval and v.get("bars"):
+            if k[0] == strategy_id and k[1] == recalc_symbol and v.get("bars"):
                 cached = v
                 break
     if not cached or not cached.get("bars"):
@@ -2405,18 +2538,83 @@ def api_strategy_recalculate(strategy_id: str):
             ind["overlay"] = indicator_configs[i].get("overlay", True)
             ind["color"] = indicator_configs[i].get("color", "#FF6D00")
 
-    # Compute signals with updated params
-    from scripts.signal_evaluator import evaluate_signals
-    # Convert param_overrides keys to float values for signal evaluator
+    return jsonify({"indicators": computed})
+
+
+# ---------------------------------------------------------------------------
+# Signal Computation via AmiBroker Exploration
+# ---------------------------------------------------------------------------
+
+@app.route("/api/strategy/<strategy_id>/signals", methods=["POST"])
+def api_strategy_signals(strategy_id: str):
+    """Compute Buy/Short/Sell/Cover signals via AmiBroker OLE Exploration.
+
+    Runs the full strategy AFL through AmiBroker's native engine with current
+    slider parameter values.  Returns signal timestamps for chart markers.
+
+    Request body:
+        {"params": {...}, "symbol": "NQ", "interval": 60, "days": 1, "end_date": null}
+    """
+    from scripts.ole_bar_analyzer import compute_signals_via_exploration
+
+    strategy = db_get_strategy(strategy_id)
+    if strategy is None:
+        return jsonify({"error": "Strategy not found"}), 404
+
+    version = db_get_latest_version(strategy_id)
+    afl_content = version.get("afl_content", "") if version else ""
+    if not afl_content:
+        return jsonify({"error": "No AFL content"}), 400
+
+    body = request.get_json(silent=True) or {}
+    param_overrides = body.get("params", {})
+    interval = body.get("interval", 60)
+    days = body.get("days", CHART_SETTINGS.get("explorer_default_days", 5))
+    end_date = body.get("end_date")
+    sig_symbol = body.get("symbol") or GCZ25_SYMBOL
+
+    # Convert param values to float
     pv = {}
     for k, v in param_overrides.items():
         try:
             pv[k] = float(v)
         except (ValueError, TypeError):
             pass
-    signals = evaluate_signals(afl_content, bars, indicator_configs, pv)
 
-    return jsonify({"indicators": computed, "signals": signals})
+    result = compute_signals_via_exploration(
+        afl_content=afl_content,
+        param_values=pv,
+        symbol=sig_symbol,
+        interval=interval,
+    )
+
+    if result.get("error"):
+        app.logger.warning("Signal computation error: %s", result["error"])
+        return jsonify(result), 503
+
+    # Filter signals to the visible chart range (based on cached bars)
+    from datetime import datetime
+    cache_key = (strategy_id, sig_symbol, interval, days, end_date)
+    cached = _explorer_bars_cache.get(cache_key)
+    if cached and cached.get("bars"):
+        bars = cached["bars"]
+        min_time = bars[0]["time"]
+        max_time = bars[-1]["time"]
+        for key in ("buy", "short", "sell", "cover"):
+            result[key] = [
+                s for s in result[key]
+                if min_time <= s["time"] <= max_time
+            ]
+
+    app.logger.info(
+        "Signals for %s: %d Buy, %d Short, %d Sell, %d Cover (%dms)",
+        strategy_id[:8],
+        len(result.get("buy", [])), len(result.get("short", [])),
+        len(result.get("sell", [])), len(result.get("cover", [])),
+        result.get("elapsed_ms", 0),
+    )
+
+    return jsonify(result)
 
 
 # ---------------------------------------------------------------------------

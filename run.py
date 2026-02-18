@@ -277,22 +277,6 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         else:
             logger.info("Optimization run but no Optimize() calls found — skipping tracker injection.")
 
-    # --- Custom metrics path injection ----------------------------------------
-    # If the AFL uses SetCustomBacktestProc("") with StaticVarGetText("d02_metrics_path"),
-    # inject the actual output path so the CBT writes the sidecar CSV.
-    custom_metrics_csv = output_dir / "custom_metrics.csv"
-    if actual_afl and 'StaticVarGetText("d02_metrics_path")' in actual_afl:
-        metrics_path_afl = (
-            '// ==== Custom Metrics Path ====\n'
-            'StaticVarSetText("d02_metrics_path", "' +
-            str(custom_metrics_csv.resolve()).replace("\\", "\\\\") +
-            '");\n'
-            '// ==== End Custom Metrics Path ====\n\n'
-        )
-        actual_afl = metrics_path_afl + actual_afl
-        AFL_STRATEGY_FILE.write_text(actual_afl, encoding="utf-8")
-        logger.info("Injected custom metrics path: %s", custom_metrics_csv)
-
     # Write a sentinel so the dashboard can discover the run_id early
     # (while the subprocess is still running).
     sentinel_path = RESULTS_DIR / ".current_run_id"
@@ -373,36 +357,154 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         )
         logger.info("Backtest completed.")
 
-        # --- Step 2b: Merge custom metrics sidecar CSV ---------------------
-        # If the AFL CBT wrote a custom_metrics.csv, merge it with results.csv
-        if custom_metrics_csv.exists():
-            try:
-                import pandas as pd
+        # --- Step 2a: Run indicator exploration & merge custom columns ----------
+        # Instead of CBT (causes hangs) or slow COM bar iteration, we run a
+        # lightweight AmiBroker exploration (run_mode=3) that computes TEMA,
+        # derivatives, etc. natively and exports per-bar indicator values.
+        # Then we merge those values with the trade CSV by date matching.
+        trades_csv = output_dir / "results.csv"
+        indicator_csv = output_dir / "indicators.csv"
+        target_sym = None
+        if actual_afl and 'Name() == "' in actual_afl:
+            import re
+            m = re.search(r'Name\(\)\s*==\s*"([^"]+)"', actual_afl)
+            if m:
+                target_sym = m.group(1)
 
-                trades_csv = output_dir / "results.csv"
-                if trades_csv.exists():
+        if target_sym and result and trades_csv.exists():
+            try:
+                # Parse AFL parameters for indicator computation
+                tema_len = 8
+                deriv_lookback = 5
+                if actual_afl:
+                    import re
+                    m = re.search(r'Param\("TEMA Length",\s*(\d+)', actual_afl)
+                    if m:
+                        tema_len = int(m.group(1))
+                    m = re.search(r'Param\("Deriv Lookback",\s*(\d+)', actual_afl)
+                    if m:
+                        deriv_lookback = int(m.group(1))
+
+                # Build exploration AFL that computes same indicators
+                exploration_afl = (
+                    f'temaLength = {tema_len};\n'
+                    f'lookback = {deriv_lookback};\n'
+                    'ema1 = EMA(Close, temaLength);\n'
+                    'ema2 = EMA(ema1, temaLength);\n'
+                    'ema3 = EMA(ema2, temaLength);\n'
+                    'temas = 3 * ema1 - 3 * ema2 + ema3;\n'
+                    'firstDeriv = (temas - Ref(temas, -lookback)) / lookback;\n'
+                    'secondDeriv = firstDeriv - Ref(firstDeriv, -lookback);\n'
+                    'temaSlope = temas - Ref(temas, -1);\n'
+                    f'Filter = Name() == "{target_sym}";\n'
+                    'AddColumn(temaSlope, "TEMASlope");\n'
+                    'AddColumn(firstDeriv, "1stDeriv");\n'
+                    'AddColumn(secondDeriv, "2ndDeriv");\n'
+                )
+
+                # Write temp AFL and build exploration APX
+                exp_afl_path = output_dir / "exploration.afl"
+                exp_afl_path.write_text(exploration_afl, encoding="utf-8")
+
+                exp_apx_path = output_dir / "exploration.apx"
+                build_apx(
+                    str(exp_afl_path),
+                    str(exp_apx_path),
+                    str(APX_TEMPLATE),
+                    run_id=run_id + "_exp",
+                    periodicity=periodicity,
+                    symbol="__ALL__",
+                )
+
+                # Run exploration via OLE
+                logger.info("Running indicator exploration for '%s' ...", target_sym)
+                import pythoncom
+                pythoncom.CoInitialize()
+                exp_bt = OLEBacktester()
+                exp_result = exp_bt.run_full_test(
+                    apx_path=str(exp_apx_path),
+                    output_dir=str(output_dir / "exp_tmp"),
+                    run_mode=1,  # exploration (AmiBroker OLE: 0=Scan, 1=Explore, 2=Backtest)
+                )
+                pythoncom.CoUninitialize()
+
+                # The exploration CSV is in exp_tmp/results.csv
+                exp_csv = output_dir / "exp_tmp" / "results.csv"
+                if exp_result and exp_csv.exists():
+                    import pandas as pd
+
+                    # AmiBroker exploration CSVs have a trailing comma on
+                    # every data row — index_col=False prevents pandas
+                    # from misaligning columns.
+                    df_ind = pd.read_csv(exp_csv, encoding="utf-8", index_col=False)
                     df_trades = pd.read_csv(trades_csv, encoding="utf-8")
-                    df_metrics = pd.read_csv(custom_metrics_csv, encoding="utf-8")
                     logger.info(
-                        "Merging custom metrics: %d trade rows, %d metric rows",
-                        len(df_trades), len(df_metrics),
+                        "Indicator exploration: %d rows, %d trades",
+                        len(df_ind), len(df_trades),
                     )
 
-                    if len(df_metrics) == len(df_trades):
-                        # Same row count — merge by position (trade order matches)
-                        for col in df_metrics.columns:
-                            if col != "EntryDate":
-                                df_trades[col] = df_metrics[col].values
-                        df_trades.to_csv(trades_csv, index=False, encoding="utf-8")
-                        logger.info("Merged %d custom columns into results.csv",
-                                    len(df_metrics.columns) - 1)
-                    else:
-                        logger.warning(
-                            "Row count mismatch (%d trades vs %d metrics) — "
-                            "skipping merge", len(df_trades), len(df_metrics)
-                        )
+                    if len(df_ind) > 0 and len(df_trades) > 0:
+                        # Build datetime-indexed lookup from exploration output
+                        # AmiBroker exploration CSV has "Date/Time" column
+                        dt_col = None
+                        for c in df_ind.columns:
+                            if "date" in c.lower() and "time" in c.lower():
+                                dt_col = c
+                                break
+                        if dt_col is None:
+                            dt_col = df_ind.columns[1] if len(df_ind.columns) > 1 else None
+
+                        date_col = "Date" if "Date" in df_trades.columns else None
+                        exit_date_col = "Ex. date" if "Ex. date" in df_trades.columns else None
+
+                        if dt_col and date_col:
+                            # Normalise both sides to pandas Timestamps for
+                            # reliable matching regardless of format differences.
+                            df_ind["_dt"] = pd.to_datetime(df_ind[dt_col], format="mixed", dayfirst=False)
+                            ind_lookup = df_ind.set_index("_dt")
+
+                            trade_entry_dt = pd.to_datetime(df_trades[date_col], format="mixed", dayfirst=False)
+                            trade_exit_dt = (
+                                pd.to_datetime(df_trades[exit_date_col], format="mixed", dayfirst=False)
+                                if exit_date_col else None
+                            )
+
+                            for ic in ["TEMASlope", "1stDeriv", "2ndDeriv"]:
+                                if ic not in ind_lookup.columns:
+                                    continue
+                                # Use reindex to vectorise the lookup
+                                entry_vals = ind_lookup[ic].reindex(trade_entry_dt).values
+                                df_trades[f"{ic}@Entry"] = [
+                                    round(float(v), 6) if pd.notna(v) else ""
+                                    for v in entry_vals
+                                ]
+                                if trade_exit_dt is not None:
+                                    exit_vals = ind_lookup[ic].reindex(trade_exit_dt).values
+                                    df_trades[f"{ic}@Exit"] = [
+                                        round(float(v), 6) if pd.notna(v) else ""
+                                        for v in exit_vals
+                                    ]
+
+                            matched = sum(1 for v in df_trades["TEMASlope@Entry"] if v != "")
+                            logger.info("Date matching: %d / %d trades matched",
+                                        matched, len(df_trades))
+
+                            df_trades.to_csv(trades_csv, index=False, encoding="utf-8")
+                            logger.info("Merged custom indicator columns into results.csv")
+
+                # Clean up temp files
+                import shutil
+                for cleanup in [exp_afl_path, exp_apx_path]:
+                    cleanup.unlink(missing_ok=True)
+                exp_tmp = output_dir / "exp_tmp"
+                if exp_tmp.exists():
+                    shutil.rmtree(exp_tmp, ignore_errors=True)
+                # Also clean up the exploration snapshot AFL
+                exp_snapshot = APX_OUTPUT.parent / f"strategy_{run_id}_exp.afl"
+                exp_snapshot.unlink(missing_ok=True)
+
             except Exception as exc:
-                logger.warning("Custom metrics merge failed: %s", exc)
+                logger.warning("Indicator exploration/merge failed: %s", exc)
 
         # --- Step 3: Update run record -------------------------------------
         now = datetime.now(timezone.utc).isoformat()

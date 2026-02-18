@@ -85,6 +85,111 @@
         box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
 
+    /* ── Column Chooser ───────────────────────────────── */
+    .col-chooser-menu {
+        max-height: 360px;
+        overflow-y: auto;
+        min-width: 220px;
+        padding: 6px 0;
+        font-size: 0.82rem;
+    }
+    .col-chooser-menu .form-check {
+        padding: 3px 12px 3px 36px;
+        margin: 0;
+    }
+    .col-chooser-menu .form-check:hover {
+        background-color: #f1f5f9;
+    }
+    .col-chooser-menu .form-check-input {
+        margin-top: 0.25em;
+    }
+    .col-chooser-divider {
+        margin: 4px 0;
+        border-top: 1px solid #e2e8f0;
+    }
+    .col-chooser-actions {
+        padding: 4px 12px;
+        display: flex;
+        gap: 8px;
+        font-size: 0.75rem;
+    }
+    .col-chooser-actions a {
+        cursor: pointer;
+        color: #3b82f6;
+        text-decoration: none;
+    }
+    .col-chooser-actions a:hover { text-decoration: underline; }
+    /* Custom column dot indicator (replaces text badge) */
+    .col-custom-dot {
+        display: inline-block;
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: #8b5cf6;
+        margin-right: 5px;
+        vertical-align: middle;
+        flex-shrink: 0;
+    }
+    .col-chooser-menu .form-check.is-custom {
+        border-left: 3px solid #8b5cf6;
+        padding-left: 33px;
+    }
+    th.bt-custom-col {
+        color: #6d28d9;
+    }
+    th.bt-custom-col::before {
+        content: '';
+        display: inline-block;
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: #8b5cf6;
+        margin-right: 4px;
+        vertical-align: middle;
+    }
+
+    /* ── Column Stats Modal (enhanced) ────────────────── */
+    #colStatsModal .modal-body { padding-bottom: 12px; }
+    .col-stats-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 0.78rem;
+    }
+    .col-stats-controls label { color: #64748b; font-weight: 500; white-space: nowrap; }
+    .col-stats-controls input[type="range"] { flex: 1; max-width: 180px; }
+    .col-stats-controls .bin-count { font-weight: 700; min-width: 28px; text-align: center; }
+    .col-stats-zoom-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.75rem;
+        color: #64748b;
+        margin-bottom: 6px;
+    }
+    .col-stats-zoom-info .zoom-range { font-weight: 600; color: #334155; }
+    .col-stats-legend {
+        display: flex;
+        gap: 14px;
+        font-size: 0.73rem;
+        color: #64748b;
+        margin-top: 4px;
+    }
+    .col-stats-legend span::before {
+        content: '';
+        display: inline-block;
+        width: 10px; height: 10px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: middle;
+    }
+    .col-stats-legend .legend-win::before  { background: rgba(22, 163, 74, 0.7); }
+    .col-stats-legend .legend-loss::before { background: rgba(220, 38, 38, 0.7); }
+    .col-stats-legend .legend-all::before  { background: rgba(59, 130, 246, 0.6); }
+
+    /* Stats mini-table tabs */
+    .col-stats-tabs { font-size: 0.75rem; margin-bottom: 6px; }
+    .col-stats-tabs .btn { padding: 2px 10px; font-size: 0.73rem; }
+
     /* ── Header Bar ───────────────────────────────────── */
     .header-bar {
         background: #fff;
@@ -232,10 +337,10 @@
 </div>
 {% endif %}
 
-{# ── Symbol Switcher ─────────────────────────────────── #}
+{# ── Symbol Switcher (version-scoped) ───────────────── #}
 {% if run and symbol_runs and symbol_runs|length > 1 %}
 <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
-    <small class="text-muted fw-bold">Symbol Runs:</small>
+    <small class="text-muted fw-bold">Symbol Runs{% if run.version %} (v{{ run.version.version_number }}){% endif %}:</small>
     {% for sym, sr in symbol_runs|dictsort %}
     {% set is_current = (sym == (run.symbol or default_symbol)) %}
     <a href="/run/{{ sr.run_id }}"
@@ -805,14 +910,41 @@
 {% else %}
 {# ── Backtest Trade Table (original) ────────────── #}
 <div class="card mb-4">
-    <div class="card-header d-flex align-items-center justify-content-between py-2"
-         data-bs-toggle="collapse" data-bs-target="#tradeTableBody" role="button"
-         aria-expanded="true" style="cursor: pointer;">
-        <span>
+    <div class="card-header d-flex align-items-center justify-content-between py-2">
+        <span data-bs-toggle="collapse" data-bs-target="#tradeTableBody" role="button"
+              aria-expanded="true" style="cursor: pointer;">
             <i class="bi bi-table me-2"></i>Trade Log
             <span class="badge bg-secondary ms-2">{{ parsed.trades|length }} trades</span>
         </span>
-        <i class="bi bi-chevron-down" style="font-size: 0.8rem;"></i>
+        <div class="d-flex align-items-center gap-2">
+            {% if parsed.columns is defined %}
+            <div class="dropdown" onclick="event.stopPropagation();">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                        id="colChooserBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        aria-expanded="false" style="font-size: 0.78rem; padding: 2px 10px;">
+                    <i class="bi bi-layout-three-columns me-1"></i>Columns
+                </button>
+                <div class="dropdown-menu dropdown-menu-end col-chooser-menu" id="colChooserMenu"
+                     aria-labelledby="colChooserBtn">
+                    <div class="col-chooser-actions">
+                        <a id="colShowAll">Show all</a>
+                        <a id="colShowDefault">Default</a>
+                    </div>
+                    <div class="col-chooser-divider"></div>
+                    {% for col in parsed.columns %}
+                    <div class="form-check">
+                        <input class="form-check-input col-toggle-check" type="checkbox"
+                               id="colToggle_{{ loop.index0 }}" data-col-index="{{ loop.index }}"
+                               data-col-name="{{ col }}" checked>
+                        <label class="form-check-label" for="colToggle_{{ loop.index0 }}">{{ col }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+            <i class="bi bi-chevron-down" style="font-size: 0.8rem; cursor: pointer;"
+               data-bs-toggle="collapse" data-bs-target="#tradeTableBody"></i>
+        </div>
     </div>
     <div class="collapse show" id="tradeTableBody">
         <div class="card-body p-0">
@@ -935,18 +1067,47 @@
 
 {# ── Column Statistics Modal ────────────── #}
 <div class="modal fade" id="colStatsModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header py-2">
                 <h6 class="modal-title" id="colStatsTitle">Column Statistics</h6>
                 <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                {# Stats tabs: All / Wins / Losses #}
+                <div class="col-stats-tabs btn-group mb-2" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" data-stats-filter="all">All</button>
+                    <button type="button" class="btn btn-outline-success" data-stats-filter="wins">Wins</button>
+                    <button type="button" class="btn btn-outline-danger" data-stats-filter="losses">Losses</button>
+                </div>
                 <table class="table table-sm table-borderless mb-3" style="font-size: 0.85rem;">
                     <tbody id="colStatsBody"></tbody>
                 </table>
-                <div style="height: 200px;">
+
+                {# Histogram controls #}
+                <div class="col-stats-controls">
+                    <label>Bins:</label>
+                    <input type="range" id="colStatsBinSlider" min="5" max="80" value="20" class="form-range">
+                    <span class="bin-count" id="colStatsBinCount">20</span>
+                    <div class="btn-group btn-group-sm ms-auto" role="group">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="colStatsShowWL" title="Toggle Win/Loss split">
+                            <i class="bi bi-pie-chart me-1"></i>Win/Loss
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="colStatsZoomOut" title="Zoom out to full range">
+                            <i class="bi bi-zoom-out me-1"></i>Reset Zoom
+                        </button>
+                    </div>
+                </div>
+                <div class="col-stats-zoom-info d-none" id="colStatsZoomInfo">
+                    <i class="bi bi-search"></i>
+                    Viewing: <span class="zoom-range" id="colStatsZoomRange"></span>
+                    <small class="text-muted">(click a bar to zoom in, Shift+click to zoom out)</small>
+                </div>
+                <div style="height: 280px; position: relative;">
                     <canvas id="colStatsChart"></canvas>
+                </div>
+                <div class="col-stats-legend" id="colStatsLegend">
+                    <span class="legend-all">All trades</span>
                 </div>
             </div>
         </div>
@@ -1388,7 +1549,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 icon.style.opacity = '1';
             });
 
-            // --- Column Statistics (double-click) ---
+            // --- Column Statistics (double-click) → enhanced histogram ---
             th.addEventListener('dblclick', function(e) {
                 e.preventDefault();
                 var col = this.dataset.col;
@@ -1396,91 +1557,385 @@ document.addEventListener('DOMContentLoaded', function() {
                 var tbody = btTable.querySelector('tbody');
                 var rows = Array.from(tbody.querySelectorAll('tr'));
 
-                // Collect numeric values from this column
-                var values = [];
+                // Collect numeric values + win/loss status from each row
+                var entries = [];   // {value, isWin}
                 rows.forEach(function(row) {
                     var cell = row.children[colIdx];
-                    if (cell) {
-                        var v = parseFloat(cell.textContent.trim());
-                        if (!isNaN(v)) values.push(v);
-                    }
+                    if (!cell) return;
+                    var v = parseFloat(cell.textContent.trim());
+                    if (isNaN(v)) return;
+                    var profit = parseFloat(row.dataset.profit);
+                    var isWin = !isNaN(profit) ? profit > 0 : null;
+                    entries.push({ value: v, isWin: isWin });
                 });
+                if (entries.length === 0) return;
 
-                if (values.length === 0) return;
+                // ── State for the interactive histogram ──
+                var allEntries = entries;
+                var fullMin = Math.min.apply(null, entries.map(function(e) { return e.value; }));
+                var fullMax = Math.max.apply(null, entries.map(function(e) { return e.value; }));
+                var zoomStack = [];  // stack of {lo, hi} ranges
+                var showWinLoss = false;
+                var currentFilter = 'all';  // 'all', 'wins', 'losses'
 
-                // Compute stats
-                var sorted = values.slice().sort(function(a, b) { return a - b; });
-                var count = values.length;
-                var sum = values.reduce(function(a, b) { return a + b; }, 0);
-                var mean = sum / count;
-                var median = count % 2 === 0
-                    ? (sorted[count / 2 - 1] + sorted[count / 2]) / 2
-                    : sorted[Math.floor(count / 2)];
-                var min = sorted[0];
-                var max = sorted[count - 1];
-                var variance = values.reduce(function(acc, v) { return acc + (v - mean) * (v - mean); }, 0) / count;
-                var stdDev = Math.sqrt(variance);
-
-                // Build stats table
-                var statsHtml = [
-                    ['Count', count],
-                    ['Mean', mean.toFixed(4)],
-                    ['Median', median.toFixed(4)],
-                    ['Min', min.toFixed(4)],
-                    ['Max', max.toFixed(4)],
-                    ['Std Dev', stdDev.toFixed(4)]
-                ].map(function(r) {
-                    return '<tr><td class="text-muted" style="width:40%;">' + r[0] + '</td><td class="fw-semibold">' + r[1] + '</td></tr>';
-                }).join('');
-                document.getElementById('colStatsTitle').textContent = col + ' — Statistics';
-                document.getElementById('colStatsBody').innerHTML = statsHtml;
-
-                // Build histogram
+                // Refs
                 var canvas = document.getElementById('colStatsChart');
-                var numBins = Math.min(15, Math.max(5, Math.ceil(Math.sqrt(count))));
-                var binWidth = (max - min) / numBins || 1;
-                var bins = new Array(numBins).fill(0);
-                var binLabels = [];
-                for (var b = 0; b < numBins; b++) {
-                    var lo = min + b * binWidth;
-                    var hi = lo + binWidth;
-                    binLabels.push(lo.toFixed(2));
-                    values.forEach(function(v) {
-                        if (b === numBins - 1 ? (v >= lo && v <= hi) : (v >= lo && v < hi)) bins[b]++;
+                var slider = document.getElementById('colStatsBinSlider');
+                var binCountEl = document.getElementById('colStatsBinCount');
+                var zoomOutBtn = document.getElementById('colStatsZoomOut');
+                var zoomInfoEl = document.getElementById('colStatsZoomInfo');
+                var zoomRangeEl = document.getElementById('colStatsZoomRange');
+                var wlBtn = document.getElementById('colStatsShowWL');
+                var legendEl = document.getElementById('colStatsLegend');
+
+                function getFilteredEntries() {
+                    if (currentFilter === 'wins') return allEntries.filter(function(e) { return e.isWin === true; });
+                    if (currentFilter === 'losses') return allEntries.filter(function(e) { return e.isWin === false; });
+                    return allEntries;
+                }
+
+                function getCurrentRange() {
+                    if (zoomStack.length > 0) return zoomStack[zoomStack.length - 1];
+                    return { lo: fullMin, hi: fullMax };
+                }
+
+                function computeStats(vals) {
+                    var sorted = vals.slice().sort(function(a, b) { return a - b; });
+                    var n = vals.length;
+                    if (n === 0) return null;
+                    var sum = vals.reduce(function(a, b) { return a + b; }, 0);
+                    var mean = sum / n;
+                    var med = n % 2 === 0 ? (sorted[n/2-1] + sorted[n/2]) / 2 : sorted[Math.floor(n/2)];
+                    var variance = vals.reduce(function(a, v) { return a + (v-mean)*(v-mean); }, 0) / n;
+                    return { count: n, mean: mean, median: med, min: sorted[0], max: sorted[n-1], stdDev: Math.sqrt(variance) };
+                }
+
+                function fmtStat(v) {
+                    if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, {maximumFractionDigits: 2});
+                    if (Math.abs(v) >= 1) return v.toFixed(2);
+                    return v.toFixed(4);
+                }
+
+                function updateStatsTable() {
+                    var filtered = getFilteredEntries();
+                    var vals = filtered.map(function(e) { return e.value; });
+                    var s = computeStats(vals);
+                    if (!s) {
+                        document.getElementById('colStatsBody').innerHTML = '<tr><td class="text-muted">No data</td></tr>';
+                        return;
+                    }
+                    var statsHtml = [
+                        ['Count', s.count],
+                        ['Mean', fmtStat(s.mean)],
+                        ['Median', fmtStat(s.median)],
+                        ['Min', fmtStat(s.min)],
+                        ['Max', fmtStat(s.max)],
+                        ['Std Dev', fmtStat(s.stdDev)]
+                    ].map(function(r) {
+                        return '<tr><td class="text-muted" style="width:40%;">' + r[0] + '</td><td class="fw-semibold">' + r[1] + '</td></tr>';
+                    }).join('');
+                    document.getElementById('colStatsBody').innerHTML = statsHtml;
+                }
+
+                function renderHistogram() {
+                    var range = getCurrentRange();
+                    var numBins = parseInt(slider.value);
+                    binCountEl.textContent = numBins;
+                    var lo = range.lo, hi = range.hi;
+                    var binW = (hi - lo) / numBins || 1;
+
+                    // Filter entries to current range
+                    var filtered = getFilteredEntries();
+                    var inRange = filtered.filter(function(e) { return e.value >= lo && e.value <= hi; });
+
+                    // Build bin data
+                    var binLabels = [];
+                    var binsAll = new Array(numBins).fill(0);
+                    var binsWin = new Array(numBins).fill(0);
+                    var binsLoss = new Array(numBins).fill(0);
+
+                    for (var b = 0; b < numBins; b++) {
+                        var bLo = lo + b * binW;
+                        var bHi = bLo + binW;
+                        binLabels.push(fmtStat(bLo));
+                        inRange.forEach(function(e) {
+                            var inBin = (b === numBins - 1) ? (e.value >= bLo && e.value <= bHi) : (e.value >= bLo && e.value < bHi);
+                            if (inBin) {
+                                binsAll[b]++;
+                                if (e.isWin === true) binsWin[b]++;
+                                else if (e.isWin === false) binsLoss[b]++;
+                            }
+                        });
+                    }
+
+                    // Build datasets
+                    var datasets;
+                    if (showWinLoss) {
+                        datasets = [
+                            {
+                                label: 'Wins',
+                                data: binsWin,
+                                backgroundColor: 'rgba(22, 163, 74, 0.7)',
+                                borderColor: 'rgba(22, 163, 74, 1)',
+                                borderWidth: 1
+                            },
+                            {
+                                label: 'Losses',
+                                data: binsLoss,
+                                backgroundColor: 'rgba(220, 38, 38, 0.7)',
+                                borderColor: 'rgba(220, 38, 38, 1)',
+                                borderWidth: 1
+                            }
+                        ];
+                        legendEl.innerHTML = '<span class="legend-win">Wins (' + inRange.filter(function(e){return e.isWin===true;}).length + ')</span>' +
+                            '<span class="legend-loss">Losses (' + inRange.filter(function(e){return e.isWin===false;}).length + ')</span>';
+                    } else {
+                        datasets = [{
+                            label: 'Frequency',
+                            data: binsAll,
+                            backgroundColor: binsAll.map(function(_, i) {
+                                var mid = lo + (i + 0.5) * binW;
+                                return mid >= 0 ? 'rgba(59, 130, 246, 0.6)' : 'rgba(148, 163, 184, 0.5)';
+                            }),
+                            borderColor: binsAll.map(function(_, i) {
+                                var mid = lo + (i + 0.5) * binW;
+                                return mid >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(148, 163, 184, 0.8)';
+                            }),
+                            borderWidth: 1
+                        }];
+                        legendEl.innerHTML = '<span class="legend-all">All trades (' + inRange.length + ')</span>';
+                    }
+
+                    // Zoom UI
+                    if (zoomStack.length > 0) {
+                        zoomOutBtn.classList.remove('d-none');
+                        zoomInfoEl.classList.remove('d-none');
+                        zoomRangeEl.textContent = fmtStat(lo) + ' \u2014 ' + fmtStat(hi);
+                    } else {
+                        zoomOutBtn.classList.add('d-none');
+                        zoomInfoEl.classList.add('d-none');
+                    }
+
+                    // Destroy previous chart
+                    if (window._colStatsChartInstance) window._colStatsChartInstance.destroy();
+
+                    window._colStatsChartInstance = new Chart(canvas.getContext('2d'), {
+                        type: 'bar',
+                        data: { labels: binLabels, datasets: datasets },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            animation: { duration: 200 },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        title: function(items) {
+                                            var i = items[0].dataIndex;
+                                            var bLo = lo + i * binW;
+                                            var bHi = bLo + binW;
+                                            return fmtStat(bLo) + ' \u2014 ' + fmtStat(bHi);
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    stacked: showWinLoss,
+                                    ticks: { stepSize: 1, font: { size: 10 } },
+                                    title: { display: true, text: 'Trades', font: { size: 10 } }
+                                },
+                                x: {
+                                    stacked: showWinLoss,
+                                    ticks: { font: { size: 9 }, maxRotation: 45 },
+                                    title: { display: true, text: col, font: { size: 10 } }
+                                }
+                            },
+                            onClick: function(evt, elems) {
+                                if (!elems || elems.length === 0) return;
+                                var idx = elems[0].index;
+                                var bLo = lo + idx * binW;
+                                var bHi = bLo + binW;
+                                // Check if any data in this sub-range
+                                var sub = inRange.filter(function(e) { return e.value >= bLo && e.value <= bHi; });
+                                if (sub.length < 2) return;
+                                if (evt.native && evt.native.shiftKey) {
+                                    // Shift+click = zoom out one level
+                                    if (zoomStack.length > 0) {
+                                        zoomStack.pop();
+                                        renderHistogram();
+                                    }
+                                } else {
+                                    // Click = zoom into this bin
+                                    zoomStack.push({ lo: bLo, hi: bHi });
+                                    renderHistogram();
+                                }
+                            }
+                        }
                     });
                 }
 
-                // Destroy previous chart instance if any
-                if (window._colStatsChartInstance) {
-                    window._colStatsChartInstance.destroy();
-                }
-                window._colStatsChartInstance = new Chart(canvas.getContext('2d'), {
-                    type: 'bar',
-                    data: {
-                        labels: binLabels,
-                        datasets: [{
-                            label: 'Frequency',
-                            data: bins,
-                            backgroundColor: 'rgba(54, 162, 235, 0.6)',
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: {
-                            y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 10 } } },
-                            x: { ticks: { font: { size: 9 }, maxRotation: 45 } }
-                        }
-                    }
+                // Title
+                document.getElementById('colStatsTitle').textContent = col + ' \u2014 Distribution';
+
+                // Slider handler
+                slider.oninput = function() {
+                    binCountEl.textContent = this.value;
+                    renderHistogram();
+                };
+
+                // Win/Loss toggle
+                wlBtn.onclick = function() {
+                    showWinLoss = !showWinLoss;
+                    this.classList.toggle('active', showWinLoss);
+                    renderHistogram();
+                };
+
+                // Zoom out button
+                zoomOutBtn.onclick = function() {
+                    zoomStack = [];
+                    renderHistogram();
+                };
+
+                // Stats filter tabs
+                document.querySelectorAll('[data-stats-filter]').forEach(function(btn) {
+                    btn.addEventListener('click', function() {
+                        document.querySelectorAll('[data-stats-filter]').forEach(function(b) { b.classList.remove('active'); });
+                        this.classList.add('active');
+                        currentFilter = this.dataset.statsFilter;
+                        updateStatsTable();
+                        renderHistogram();
+                    });
                 });
+
+                // Initial render
+                var initBins = Math.min(25, Math.max(8, Math.ceil(Math.sqrt(entries.length))));
+                slider.value = initBins;
+                currentFilter = 'all';
+                document.querySelectorAll('[data-stats-filter]').forEach(function(b) {
+                    b.classList.toggle('active', b.dataset.statsFilter === 'all');
+                });
+                showWinLoss = false;
+                wlBtn.classList.remove('active');
+                zoomStack = [];
+                updateStatsTable();
+                renderHistogram();
 
                 var modal = new bootstrap.Modal(document.getElementById('colStatsModal'));
                 modal.show();
             });
         });
+    })();
+
+    /* ═══════════════════════════════════════════════════════
+       COLUMN CHOOSER — Show/Hide Trade Table Columns
+       ═══════════════════════════════════════════════════════ */
+    (function() {
+        var btTable = document.getElementById('btTradeTable');
+        var menu = document.getElementById('colChooserMenu');
+        if (!btTable || !menu) return;
+
+        // Standard AmiBroker trade-list columns (everything else is "custom")
+        var standardCols = ['symbol','trade','date','price','ex. date','ex. price',
+                            '% chg','profit','% profit','contracts','shares',
+                            'position value','cum. profit','# bars','profit/bar',
+                            'mae','mfe','scale in/out','entry signal','exit signal',
+                            'max. profit','max. loss'];
+
+        // Columns shown by default (core + custom metrics)
+        var defaultCols = ['symbol','trade','date','price','ex. date','ex. price',
+                           'profit','% chg','shares','contracts','position value',
+                           'cum. profit','# bars','profit/bar',
+                           'temaslope@entry','1stderiv@entry','2ndderiv@entry'];
+
+        // localStorage key based on current page (per-run persistence)
+        var storageKey = 'bt_col_vis_' + window.location.pathname;
+
+        // Load saved visibility (or null if never set)
+        var savedVis = null;
+        try {
+            var raw = localStorage.getItem(storageKey);
+            if (raw) savedVis = JSON.parse(raw);
+        } catch(e) {}
+
+        var checks = menu.querySelectorAll('.col-toggle-check');
+
+        function applyVisibility() {
+            var colIndices = [];
+            checks.forEach(function(cb) {
+                var idx = parseInt(cb.dataset.colIndex);  // 1-based (col 0 is #)
+                if (!cb.checked) colIndices.push(idx);
+            });
+
+            // Hide/show th and td for each hidden column index
+            var allRows = btTable.querySelectorAll('tr');
+            allRows.forEach(function(row) {
+                var cells = row.children;
+                for (var c = 1; c < cells.length; c++) {  // skip col 0 (#)
+                    cells[c].style.display = colIndices.indexOf(c) !== -1 ? 'none' : '';
+                }
+            });
+
+            // Save to localStorage
+            var vis = {};
+            checks.forEach(function(cb) {
+                vis[cb.dataset.colName] = cb.checked;
+            });
+            try { localStorage.setItem(storageKey, JSON.stringify(vis)); } catch(e) {}
+        }
+
+        // Initialise checkboxes from saved state or defaults
+        checks.forEach(function(cb) {
+            var colName = cb.dataset.colName;
+            if (savedVis && colName in savedVis) {
+                cb.checked = savedVis[colName];
+            } else {
+                // Default: show core columns, hide others
+                cb.checked = defaultCols.indexOf(colName.toLowerCase()) !== -1;
+            }
+            cb.addEventListener('change', applyVisibility);
+        });
+
+        // Show All / Default links
+        document.getElementById('colShowAll').addEventListener('click', function(e) {
+            e.preventDefault();
+            checks.forEach(function(cb) { cb.checked = true; });
+            applyVisibility();
+        });
+        document.getElementById('colShowDefault').addEventListener('click', function(e) {
+            e.preventDefault();
+            checks.forEach(function(cb) {
+                cb.checked = defaultCols.indexOf(cb.dataset.colName.toLowerCase()) !== -1;
+            });
+            applyVisibility();
+        });
+
+        // Tag custom columns with colored dot indicator (in dropdown and table header)
+        checks.forEach(function(cb) {
+            var colName = cb.dataset.colName;
+            var isCustom = standardCols.indexOf(colName.toLowerCase()) === -1;
+            if (isCustom) {
+                // Add colored left border in dropdown
+                cb.parentNode.classList.add('is-custom');
+                // Add dot in dropdown label
+                var label = cb.parentNode.querySelector('label');
+                if (label && !label.querySelector('.col-custom-dot')) {
+                    var dot = document.createElement('span');
+                    dot.className = 'col-custom-dot';
+                    label.insertBefore(dot, label.firstChild);
+                }
+                // Add class to table header (CSS ::before adds the dot)
+                var colIdx = parseInt(cb.dataset.colIndex);
+                var headerRow = btTable.querySelector('thead tr');
+                if (headerRow && headerRow.children[colIdx]) {
+                    headerRow.children[colIdx].classList.add('bt-custom-col');
+                }
+            }
+        });
+
+        // Apply on page load
+        applyVisibility();
     })();
 
     /* ═══════════════════════════════════════════════════════

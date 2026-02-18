@@ -1067,11 +1067,16 @@ def run_detail(run_id: str):
     _afl = run.get("afl_content") or (version.get("afl_content", "") if version else "")
     indicator_configs = extract_strategy_indicators(_afl) if _afl else []
 
-    # Build symbol switcher: other completed runs of this strategy on different symbols
+    # Build symbol switcher: completed runs of this strategy for the SAME version.
+    # Scoping to version_id ensures that switching symbols stays within the
+    # same code snapshot — results are always (version, symbol) pairs.
     symbol_runs = {}
+    current_version_id = run.get("version_id")
     sibling_runs = db_list_runs(strategy_id=run["strategy_id"])
     for r in sibling_runs:
         if r.get("status") != "completed":
+            continue
+        if r.get("version_id") != current_version_id:
             continue
         sym = r.get("symbol") or GCZ25_SYMBOL
         if sym not in symbol_runs:

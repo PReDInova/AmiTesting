@@ -281,8 +281,10 @@ class OLEBacktester:
         dialog_handler = DialogHandler()
         try:
             # Start monitoring for blocking dialogs BEFORE opening the APX.
-            # AmiBroker may show modal dialogs (e.g. "formula is different")
-            # that block the COM call; the handler dismisses them automatically.
+            # The "formula is different" dialog blocks AnalysisDocs.Open().
+            # Dismissing it from the background thread corrupts the original
+            # COM proxy, so after Open() returns we re-dispatch COM and
+            # access the already-open analysis doc WITHOUT re-opening it.
             dialog_handler.start()
 
             # --- Open the analysis project ---
@@ -293,14 +295,33 @@ class OLEBacktester:
                 return False
             logger.info("Analysis project opened successfully.")
 
+            # If a dialog was dismissed, the COM proxy from Open() is stale.
+            # Get a fresh proxy by re-dispatching COM and accessing the
+            # already-open analysis doc through the AnalysisDocs collection.
+            if dialog_handler.dismissed:
+                logger.info(
+                    "Dialog dismissed during Open() — acquiring fresh COM proxy."
+                )
+                time.sleep(1)  # let AmiBroker settle after dialog
+                self.ab = win32com.client.Dispatch(AMIBROKER_EXE)
+                # Access the already-open doc (do NOT call Open() again).
+                doc_count = self.ab.AnalysisDocs.Count
+                logger.info("AnalysisDocs.Count = %d", doc_count)
+                if doc_count > 0:
+                    analysis_doc = self.ab.AnalysisDocs.Item(doc_count - 1)
+                    logger.info("Fresh analysis_doc proxy acquired via Item(%d).", doc_count - 1)
+                else:
+                    logger.error("No open analysis docs found after dialog dismiss.")
+                    return False
+
             # --- Kick off the backtest ---
             logger.info("Starting backtest (run_mode=%d) ...", run_mode)
             analysis_doc.Run(run_mode)
 
             # --- Poll until finished or timed out ---
-            elapsed = 0.0
             start_time = time.monotonic()
             while analysis_doc.IsBusy:
+                elapsed = time.monotonic() - start_time
                 if elapsed >= max_wait:
                     logger.error(
                         "Backtest timed out after %.1f seconds (max_wait=%d).",
@@ -329,8 +350,8 @@ class OLEBacktester:
                     "Waiting for backtest to complete... (%.1fs elapsed)", elapsed
                 )
                 time.sleep(poll_interval)
-                elapsed = time.monotonic() - start_time
 
+            elapsed = time.monotonic() - start_time
             logger.info("Backtest completed in %.1f seconds.", elapsed)
 
             # Write final progress update
@@ -418,6 +439,49 @@ class OLEBacktester:
                 )
             except OSError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Bar data export (for Python-side indicator computation)
+    # ------------------------------------------------------------------
+
+    def export_symbol_bars(self, symbol: str, output_path: str) -> bool:
+        """Export OHLC bar data for a symbol to CSV via COM.
+
+        Must be called while connected (before disconnect).
+        Returns True on success.
+        """
+        if self.ab is None:
+            logger.warning("export_symbol_bars: not connected")
+            return False
+
+        try:
+            stock = self.ab.Stocks(symbol)
+            if stock is None:
+                logger.warning("Symbol '%s' not found in database", symbol)
+                return False
+
+            quotes = stock.Quotations
+            count = quotes.Count
+            if count == 0:
+                logger.warning("No quotes for symbol '%s'", symbol)
+                return False
+
+            logger.info("Exporting %d bars for '%s' to %s", count, symbol, output_path)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("DateTime,Open,High,Low,Close,Volume\n")
+                for i in range(count):
+                    # AmiBroker COM uses direct indexing on Quotations
+                    q = quotes(i)
+                    dt = q.Date
+                    dt_str = dt.strftime("%m/%d/%Y %H:%M:%S") if hasattr(dt, 'strftime') else str(dt)
+                    f.write(f"{dt_str},{q.Open},{q.High},{q.Low},{q.Close},{q.Volume}\n")
+
+            logger.info("Exported %d bars for '%s'", count, symbol)
+            return True
+
+        except Exception as exc:
+            logger.warning("export_symbol_bars failed: %s", exc)
+            return False
 
     # ------------------------------------------------------------------
     # Disconnect

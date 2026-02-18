@@ -113,7 +113,10 @@
 </div>
 
 {% elif state.success == true %}
-<!-- Completed successfully -->
+<!-- Completed successfully — auto-redirect to results -->
+{% if state.run_id %}
+<script>window.location.href = "/run/{{ state.run_id }}";</script>
+{% endif %}
 <div class="callout-green mb-4 d-flex align-items-start gap-3">
     <i class="bi bi-check-circle-fill text-success fs-3"></i>
     <div>
@@ -132,6 +135,7 @@
             <i class="bi bi-eye me-1"></i>View Results
         </a>
         {% endif %}
+        <noscript><p class="mt-1">Redirecting to results...</p></noscript>
     </div>
 </div>
 
@@ -269,10 +273,25 @@ document.addEventListener('DOMContentLoaded', function() {
     pollTimer = setInterval(pollProgress, 2000);
 
     {% elif state.running %}
-    // ── Simple page reload for non-optimization runs ──
-    setTimeout(function() {
-        window.location.reload();
-    }, 3000);
+    // ── Poll for non-optimization runs and auto-redirect to results ──
+    var statusTimer = setInterval(function() {
+        fetch("/api/backtest/status")
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.running) {
+                    clearInterval(statusTimer);
+                    if (data.success && data.run_id) {
+                        window.location.href = "/run/" + data.run_id;
+                    } else {
+                        window.location.reload();
+                    }
+                }
+            })
+            .catch(function() {
+                // On error, fall back to page reload
+                window.location.reload();
+            });
+    }, 2000);
     {% endif %}
 });
 

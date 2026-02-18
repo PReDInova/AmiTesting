@@ -95,12 +95,6 @@ SetPositionSize(1, spsShares);
 Buy   = ExRem(Buy, Short);
 Short = ExRem(Short, Buy);
 
-// ---- Store indicator arrays for CBT custom metrics (per-symbol) ----
-temaSlope = temas - Ref(temas, -1);
-StaticVarSet("d02_fd_" + Name(), firstDeriv);
-StaticVarSet("d02_sd_" + Name(), secondDeriv);
-StaticVarSet("d02_ts_" + Name(), temaSlope);
-
 // ---- Visualization ----
 Plot(Close, "Price", colorDefault, styleCandle);
 Plot(temas, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
@@ -116,82 +110,3 @@ Title = Name() + " | D02 NQ Deriv TEMA Zero-Cross" +
         " | Stop=" + NumToStr(stopPoints, 1.0) +
         " | Target=" + NumToStr(targetPoints, 1.0) +
         " | Window=" + NumToStr(tradeStartTime, 1.0) + "-" + NumToStr(tradeEndTime, 1.0);
-
-// ---- Custom Backtest Procedure: write per-trade metrics to CSV ----
-// AmiBroker's trade.AddCustomMetric may not be supported in all versions.
-// Instead, write a sidecar CSV that run.py merges post-backtest.
-SetCustomBacktestProc("");
-
-if (Status("action") == actionPortfolio)
-{
-    bo = GetBacktesterObject();
-    bo.Backtest();
-
-    // Build output path from the results dir stored in StaticVar
-    _metricsPath = StaticVarGetText("d02_metrics_path");
-    if (_metricsPath == "")
-    {
-        _metricsPath = "C:\\Users\\prestondinova\\Documents\\AmiTesting\\results\\d02_custom_metrics.csv";
-    }
-
-    fh = fopen(_metricsPath, "w");
-    if (fh)
-    {
-        fputs("EntryDate,1stDeriv@Entry,2ndDeriv@Entry,TEMASlope@Entry,1stDeriv@Exit,2ndDeriv@Exit,1stDeriv Min,1stDeriv Max,2ndDeriv Min,2ndDeriv Max\n", fh);
-
-        for (trade = bo.GetFirstTrade(); trade; trade = bo.GetNextTrade())
-        {
-            sym = trade.Symbol;
-            SetForeign(sym);
-
-            _fd = StaticVarGet("d02_fd_" + sym);
-            _sd = StaticVarGet("d02_sd_" + sym);
-            _ts = StaticVarGet("d02_ts_" + sym);
-
-            eDT = trade.EntryDateTime;
-            xDT = trade.ExitDateTime;
-
-            // Lookup values at entry/exit datetimes
-            fdEntry = Nz(Lookup(_fd, eDT, 1));
-            sdEntry = Nz(Lookup(_sd, eDT, 1));
-            tsEntry = Nz(Lookup(_ts, eDT, 1));
-            fdExit  = Nz(Lookup(_fd, xDT, 1));
-            sdExit  = Nz(Lookup(_sd, xDT, 1));
-
-            // Min/Max between entry and exit
-            eIdx = Nz(Lookup(BarIndex(), eDT, 1));
-            xIdx = Nz(Lookup(BarIndex(), xDT, 1));
-
-            fdMin = fdEntry; fdMax = fdEntry;
-            sdMin = sdEntry; sdMax = sdEntry;
-            if (eIdx < xIdx)
-            {
-                for (i = eIdx; i <= xIdx; i++)
-                {
-                    tmpFd = Nz(_fd[i]);
-                    if (tmpFd < fdMin) fdMin = tmpFd;
-                    if (tmpFd > fdMax) fdMax = tmpFd;
-                    tmpSd = Nz(_sd[i]);
-                    if (tmpSd < sdMin) sdMin = tmpSd;
-                    if (tmpSd > sdMax) sdMax = tmpSd;
-                }
-            }
-
-            RestorePriceArrays();
-
-            // Write row: EntryDate matches trade CSV "Date" column for merge
-            fputs(DateTimeToStr(eDT) + "," +
-                  NumToStr(fdEntry, 1.6) + "," +
-                  NumToStr(sdEntry, 1.6) + "," +
-                  NumToStr(tsEntry, 1.6) + "," +
-                  NumToStr(fdExit, 1.6) + "," +
-                  NumToStr(sdExit, 1.6) + "," +
-                  NumToStr(fdMin, 1.6) + "," +
-                  NumToStr(fdMax, 1.6) + "," +
-                  NumToStr(sdMin, 1.6) + "," +
-                  NumToStr(sdMax, 1.6) + "\n", fh);
-        }
-
-        fclose(fh);
-    }
-}

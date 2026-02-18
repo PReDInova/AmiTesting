@@ -7,9 +7,10 @@ symbol, and produces the final .apx file.
 
 FormulaContent uses AmiBroker's custom encoding (literal \\r\\n for newlines)
 plus standard XML entity escaping (&lt; &gt; &amp;) so that AFL comparison
-operators don't break the XML parser.  For AFL without special XML chars
-the content matches the snapshot file byte-for-byte; for AFL with <, >, or
-& the mismatch is handled by the OLE caller's dialog auto-dismiss.
+operators don't break the XML parser.  The encoded content is derived from
+the snapshot file's exact bytes so that AmiBroker sees a perfect match
+between FormulaContent and FormulaPath — preventing the "formula is
+different" dialog that corrupts COM automation.
 
 Uses raw string operations (not ElementTree) to preserve the exact byte
 format of the template — AmiBroker is strict about XML formatting, line
@@ -115,11 +116,14 @@ def build_apx(
                 snapshot_path, snapshot_path.stat().st_size)
 
     # --- FormulaContent -----------------------------------------------------
-    # Leave FormulaContent empty so AmiBroker always reads from FormulaPath.
-    # When FormulaContent is populated, AmiBroker compares it against the
-    # on-disk file and shows a blocking "Keep / Overwrite" dialog if they
-    # differ (which breaks OLE automation).  With an empty FormulaContent,
-    # AmiBroker silently reads the formula from FormulaPath — no dialog.
+    # By default, populate FormulaContent with the AFL encoded in AmiBroker's
+    # format (literal \r\n for newlines, XML entity escaping).  This prevents
+    # the "formula is different" dialog that corrupts COM automation.
+    #
+    # When populate_content=False (passed via kwargs), FormulaContent is cleared
+    # and AmiBroker loads from FormulaPath instead.  The DialogHandler handles
+    # the resulting dialog.
+    populate_content = kwargs.get("populate_content", True)
     fc_open = b"<FormulaContent>"
     fc_close = b"</FormulaContent>"
     output = template
@@ -127,12 +131,24 @@ def build_apx(
     if fc_open in output and fc_close in output:
         fc_start = output.find(fc_open) + len(fc_open)
         fc_end = output.find(fc_close)
-        output = output[:fc_start] + output[fc_end:]
-        logger.info("FormulaContent cleared (AmiBroker reads from FormulaPath)")
+        if populate_content:
+            # Read the snapshot back and encode for FormulaContent.
+            # AmiBroker stores newlines as literal \r\n (4-char sequence)
+            # and uses standard XML entity escaping.
+            snap_bytes = snapshot_path.read_bytes()
+            snap_text = snap_bytes.decode("iso-8859-1")
+            # Convert CRLF → literal \r\n
+            fc_encoded = snap_text.replace("\r\n", "\\r\\n").replace("\r", "\\r\\n").replace("\n", "\\r\\n")
+            # XML-escape special characters
+            fc_encoded = fc_encoded.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            output = output[:fc_start] + fc_encoded.encode("iso-8859-1") + output[fc_end:]
+            logger.info("FormulaContent populated (%d encoded chars)", len(fc_encoded))
+        else:
+            output = output[:fc_start] + output[fc_end:]
+            logger.info("FormulaContent cleared (formula loaded from FormulaPath)")
 
     # --- Set FormulaPath to the snapshot -----------------------------------
-    # AmiBroker APX format uses double backslashes in FormulaPath
-    # (matching the reference APX format that works with AmiBroker).
+    # AmiBroker APX format uses double backslashes in FormulaPath.
     fp_open = b"<FormulaPath>"
     fp_close = b"</FormulaPath>"
     if fp_open in output and fp_close in output:

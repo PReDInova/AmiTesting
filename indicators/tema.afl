@@ -1,0 +1,72 @@
+// ===========================================
+// Triple Exponential Moving Average (TEMA)
+// ===========================================
+//
+// This indicator calculates TEMA, which is a smoothed moving average
+// that reduces lag compared to simple or exponential moving averages.
+// Session reset time is configurable for different trading sessions.
+//
+// INPUTS (must be defined before including this file):
+//   - smoothingLength: Period for EMA calculations
+//   - sourcePrice: Price array to smooth (typically Close)
+//   - sessionResetTime: (OPTIONAL) Time in HHMMSS format when session resets
+//                       If not defined, defaults to midnight (0) for EOD reset
+//                       Examples: 30000 = 3:00 AM (Asian), 180000 = 6:00 PM, 0 = Midnight
+//
+// OUTPUTS:
+//   - temas: The calculated TEMA array
+
+// ---- Session-Reset TEMA smoothing ----
+// Check if sessionResetTime was defined by calling strategy file
+// If not, provide a default (midnight = 0 for EOD reset)
+if( IsEmpty( sessionResetTime ) )
+{
+    sessionResetTime = Param( "Session Reset Time (HHMMSS)", 0, 0, 235959, 1 );
+}
+
+// Detect session boundaries
+tn = TimeNum();
+prevTime = Ref(tn, -1);
+
+// Handle midnight reset (sessionResetTime = 0) as a special case
+if( sessionResetTime == 0 )
+{
+    // Reset at calendar day change
+    NewSession = Day() != Ref(Day(), -1);
+}
+else
+{
+    // Reset when crossing the specified time, OR at calendar day change (handles weekend gaps)
+    NewSession = (prevTime < sessionResetTime AND tn >= sessionResetTime) OR
+                 (Day() != Ref(Day(), -1));
+}
+
+// Calculate session-reset EMAs using a loop approach
+// This ensures EMA resets to the initial value at each session start
+ema1 = sourcePrice;
+ema2 = sourcePrice;
+ema3 = sourcePrice;
+
+// EMA smoothing factor
+alpha = 2.0 / (smoothingLength + 1);
+
+// Initialize first bar
+if( BarCount > 0 )
+{
+    ema1[0] = sourcePrice[0];
+    ema2[0] = sourcePrice[0];
+    ema3[0] = sourcePrice[0];
+}
+
+// Loop through bars to calculate EMAs
+// EMAs continue smoothly across session boundaries (no reset to zero)
+for( i = 1; i < BarCount; i++ )
+{
+    // Continue EMA calculation (carries forward previous values)
+    ema1[i] = alpha * sourcePrice[i] + (1 - alpha) * ema1[i-1];
+    ema2[i] = alpha * ema1[i] + (1 - alpha) * ema2[i-1];
+    ema3[i] = alpha * ema2[i] + (1 - alpha) * ema3[i-1];
+}
+
+// Calculate TEMA from the three EMAs
+temas = 3 * ema1 - 3 * ema2 + ema3;

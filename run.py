@@ -145,7 +145,7 @@ def _classify_optimization_columns(df) -> tuple[list[str], list[str]]:
     return param_cols, metric_cols
 
 
-def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None) -> int:
+def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None, date_range: str = None) -> int:
     """Run the full backtest pipeline.
 
     Parameters
@@ -156,6 +156,9 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
     version_id : str, optional
         UUID of the specific version to run. If not provided, uses the
         latest version of the selected strategy.
+    date_range : str, optional
+        Period code for the backtest window (e.g. '1m', '3m', '6m', '1y',
+        or '1m@6m' for 1 month starting 6 months into the dataset).
 
     Returns
     -------
@@ -232,14 +235,17 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         logger.info("Wrote version AFL to %s (%d chars)", AFL_STRATEGY_FILE, len(actual_afl))
 
     effective_symbol = symbol if symbol == "__ALL__" else (symbol or GCZ25_SYMBOL)
+    effective_date_range = date_range or "1y"
 
+    run_params = {"run_mode": run_mode or 2, "date_range": effective_date_range}
     run_id = create_run(
         version_id=version_id,
         strategy_id=strategy_id,
         apx_file=str(APX_OUTPUT),
         afl_content=actual_afl,
-        params_json=json.dumps({"run_mode": run_mode or 2}),
+        params_json=json.dumps(run_params),
         symbol=effective_symbol,
+        date_range=effective_date_range,
     )
     output_dir = RESULTS_DIR / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -334,6 +340,24 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
                 periodicity = 5  # 1-minute native
                 logger.info("No TimeFrameSet + symbol filter — defaulting to Periodicity=5 (1-min)")
 
+        # --- Resolve dataset date range for APX date fields ---
+        dataset_start = None
+        dataset_end = None
+        if effective_date_range:
+            try:
+                from scripts.ole_stock_data import get_dataset_date_range
+                # Use the backtest symbol (or default) to query dates
+                query_symbol = effective_symbol if effective_symbol != "__ALL__" else GCZ25_SYMBOL
+                dr = get_dataset_date_range(symbol=query_symbol)
+                if dr.get("first_date") and dr.get("last_date"):
+                    dataset_start = dr["first_date"]
+                    dataset_end = dr["last_date"]
+                    logger.info("Dataset date range: %s to %s", dataset_start, dataset_end)
+                else:
+                    logger.warning("Could not determine dataset dates: %s", dr.get("error"))
+            except Exception as exc:
+                logger.warning("Failed to query dataset date range: %s", exc)
+
         # Use a unique APX filename per run.  AmiBroker caches the formula
         # associated with an APX file across sessions; reusing the same
         # filename (gcz25_test.apx) causes a "formula is different" dialog
@@ -346,6 +370,9 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
             run_id=run_id,
             periodicity=periodicity,
             symbol=effective_symbol,
+            date_range=effective_date_range,
+            dataset_start=dataset_start,
+            dataset_end=dataset_end,
         )
         logger.info("APX file ready: %s", apx_path)
 
@@ -488,6 +515,11 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
                             matched = sum(1 for v in df_trades["TEMASlope@Entry"] if v != "")
                             logger.info("Date matching: %d / %d trades matched",
                                         matched, len(df_trades))
+
+                            # TimeOfDay: extract HH:MM from trade timestamps
+                            df_trades["TimeOfDay@Entry"] = trade_entry_dt.dt.strftime("%H:%M")
+                            if trade_exit_dt is not None:
+                                df_trades["TimeOfDay@Exit"] = trade_exit_dt.dt.strftime("%H:%M")
 
                             df_trades.to_csv(trades_csv, index=False, encoding="utf-8")
                             logger.info("Merged custom indicator columns into results.csv")
@@ -635,6 +667,8 @@ if __name__ == "__main__":
     parser.add_argument("--run-mode", type=int, default=None)
     parser.add_argument("--symbol", default=None,
                         help="Ticker symbol to backtest against")
+    parser.add_argument("--date-range", default=None,
+                        help="Backtest period code (1m, 3m, 6m, 1y, or 1m@6m)")
     # Support legacy positional args for backwards compatibility
     parser.add_argument("legacy_args", nargs="*", default=[])
     args = parser.parse_args()
@@ -644,4 +678,4 @@ if __name__ == "__main__":
     vid = args.version_id or (args.legacy_args[1] if len(args.legacy_args) > 1 else None)
     rm = args.run_mode if args.run_mode is not None else (int(args.legacy_args[2]) if len(args.legacy_args) > 2 else None)
 
-    sys.exit(main(strategy_id=sid, version_id=vid, run_mode=rm, symbol=args.symbol))
+    sys.exit(main(strategy_id=sid, version_id=vid, run_mode=rm, symbol=args.symbol, date_range=args.date_range))

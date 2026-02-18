@@ -1,0 +1,137 @@
+// ===========================================
+// Derivative Lookback Peak/Trough Detection
+// ===========================================
+//
+// This indicator calculates first and second derivatives of a smoothed
+// price series and detects peaks and troughs based on slope changes.
+// Session reset time is configurable for different trading sessions.
+//
+// INPUTS (must be defined before including this file):
+//   - temas: The smoothed price array to analyze
+//   - lookback: Number of bars to look back for derivative calculation
+//   - minSeparation: Minimum bars between valid signals
+//   - sessionResetTime: (OPTIONAL) Time in HHMMSS format when session resets
+//                       If not defined, defaults to midnight (0) for EOD reset
+//                       Examples: 30000 = 3:00 AM (Asian), 180000 = 6:00 PM, 0 = Midnight
+//
+// OUTPUTS:
+//   - firstDeriv: First derivative (rate of change)
+//   - secondDeriv: Second derivative (acceleration)
+//   - isPeak: Raw peak detection (before separation filter)
+//   - isTrough: Raw trough detection (before separation filter)
+//   - validPeak: Filtered peak signal (with min separation)
+//   - validTrough: Filtered trough signal (with min separation)
+//   - peakLevel: Horizontal line at last peak value
+//   - troughLevel: Horizontal line at last trough value
+
+// ---- Session boundary detection (configurable reset time) ----
+// Check if sessionResetTime was defined by calling strategy file
+// If not, provide a default (midnight = 0 for EOD reset)
+if( IsEmpty( sessionResetTime ) )
+{
+    sessionResetTime = Param( "Session Reset Time (HHMMSS)", 0, 0, 235959, 1 );
+}
+
+// Detect session boundaries
+tn = TimeNum();
+prevTime = Ref(tn, -1);
+
+// Handle midnight reset (sessionResetTime = 0) as a special case
+if( sessionResetTime == 0 )
+{
+    // Reset at calendar day change
+    NewSession = Day() != Ref(Day(), -1);
+}
+else
+{
+    // Reset when crossing the specified time, OR at calendar day change (handles weekend gaps)
+    NewSession = (prevTime < sessionResetTime AND tn >= sessionResetTime) OR
+                 (Day() != Ref(Day(), -1));
+}
+
+// ---- First + second derivatives ----
+firstDeriv  = ( temas - Ref( temas, -lookback ) ) / lookback;
+secondDeriv = firstDeriv - Ref( firstDeriv, -lookback );
+
+// ---- Slope-change detection ----
+slopeChangePosToNeg = Ref( firstDeriv, -1 ) > 0 AND firstDeriv <= 0; // peak candidate
+slopeChangeNegToPos = Ref( firstDeriv, -1 ) < 0 AND firstDeriv >= 0; // trough candidate
+
+// Confirm with second derivative sign
+isPeak   = slopeChangePosToNeg AND ( secondDeriv < 0 );
+isTrough = slopeChangeNegToPos AND ( secondDeriv > 0 );
+
+// ---- Session-aware BarsSince calculation ----
+// Reset the counter at each session boundary
+sincePeak = 0;
+sinceTrough = 0;
+lastPeak = -999999;    // Large negative number (bars since last peak in current session)
+lastTrough = -999999;  // Large negative number (bars since last trough in current session)
+
+for( i = 0; i < BarCount; i++ )
+{
+    if( NewSession[i] )
+    {
+        // Reset at session boundary
+        lastPeak = -999999;
+        lastTrough = -999999;
+    }
+
+    // Update peak tracking
+    if( isPeak[i] )
+        lastPeak = i;
+
+    // Update trough tracking
+    if( isTrough[i] )
+        lastTrough = i;
+
+    // Calculate bars since last signal (within current session only)
+    if( lastPeak >= 0 )
+        sincePeak[i] = i - lastPeak;
+    else
+        sincePeak[i] = 999999;  // Large number if no peak in current session
+
+    if( lastTrough >= 0 )
+        sinceTrough[i] = i - lastTrough;
+    else
+        sinceTrough[i] = 999999;  // Large number if no trough in current session
+}
+
+// ---- Min-separation filter using session-aware BarsSince ----
+// Reference previous bar's count (not current bar)
+sincePeakPrev   = Ref( sincePeak, -1 );
+sinceTroughPrev = Ref( sinceTrough, -1 );
+
+// Don't allow signals at session boundaries (first bar of session)
+validPeak   = isPeak AND sincePeakPrev >= minSeparation AND sinceTroughPrev >= minSeparation AND NOT NewSession;
+validTrough = isTrough AND sinceTroughPrev >= minSeparation AND sincePeakPrev >= minSeparation AND NOT NewSession;
+
+// ---- Horizontal lines from last peak / trough ----
+// Carry forward last session's levels instead of resetting to zero
+peakLevel = 0;
+troughLevel = 0;
+lastValidPeakLevel = 0;
+lastValidTroughLevel = 0;
+
+for( i = 0; i < BarCount; i++ )
+{
+    if( NewSession[i] )
+    {
+        // At session boundary, carry forward the previous values
+        // This maintains visual continuity on the chart
+        if( i > 0 )
+        {
+            lastValidPeakLevel = peakLevel[i-1];
+            lastValidTroughLevel = troughLevel[i-1];
+        }
+    }
+
+    if( validPeak[i] )
+        lastValidPeakLevel = temas[i];
+
+    if( validTrough[i] )
+        lastValidTroughLevel = temas[i];
+
+    peakLevel[i] = lastValidPeakLevel;
+    troughLevel[i] = lastValidTroughLevel;
+}

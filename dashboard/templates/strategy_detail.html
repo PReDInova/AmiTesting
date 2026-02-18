@@ -93,6 +93,22 @@
                 <option value="">{{ default_symbol }}</option>
                 <option value="__ALL__">All</option>
             </select>
+            <select class="form-select form-select-sm date-range-selector" name="date_range" id="dateRangeHeader"
+                    style="width: auto; max-width: 200px;"
+                    title="Data period for backtest">
+                <option value="1y" selected>Full Year</option>
+                <option value="6m">Last 6 Months</option>
+                <option value="3m">Last 3 Months</option>
+                <option value="1m">Last 1 Month</option>
+                <option disabled>-- From start --</option>
+                <option value="1m@0m">1M from start</option>
+                <option value="1m@3m">1M @ +3M</option>
+                <option value="1m@6m">1M @ +6M</option>
+                <option value="1m@9m">1M @ +9M</option>
+                <option value="3m@0m">3M from start</option>
+                <option value="3m@3m">3M @ +3M</option>
+                <option value="3m@6m">3M @ +6M</option>
+            </select>
             <button type="submit" class="btn btn-success"
                 {% if not db_configured %}disabled{% endif %}>
                 <i class="bi bi-play-fill me-1"></i>Run
@@ -205,6 +221,24 @@
         <option value="">{{ default_symbol }}</option>
         <option value="__ALL__">All Symbols</option>
     </select>
+    <small class="text-muted ms-2">Period:</small>
+    <select class="form-select form-select-sm date-range-selector" id="versionDateRange"
+            style="width: auto; max-width: 200px;"
+            onchange="updateVersionDateRange(this.value)"
+            title="Data period for backtest">
+        <option value="1y" selected>Full Year</option>
+        <option value="6m">Last 6 Months</option>
+        <option value="3m">Last 3 Months</option>
+        <option value="1m">Last 1 Month</option>
+        <option disabled>-- From start --</option>
+        <option value="1m@0m">1M from start</option>
+        <option value="1m@3m">1M @ +3M</option>
+        <option value="1m@6m">1M @ +6M</option>
+        <option value="1m@9m">1M @ +9M</option>
+        <option value="3m@0m">3M from start</option>
+        <option value="3m@3m">3M @ +3M</option>
+        <option value="3m@6m">3M @ +6M</option>
+    </select>
 </div>
 <div class="table-responsive mb-4">
     <table class="table table-hover align-middle">
@@ -236,6 +270,7 @@
                             <input type="hidden" name="strategy_id" value="{{ strategy.id }}">
                             <input type="hidden" name="version_id" value="{{ v.id }}">
                             <input type="hidden" name="symbol" value="" class="version-symbol-input">
+                            <input type="hidden" name="date_range" value="1y" class="version-daterange-input">
                             <button type="submit" class="btn btn-sm btn-outline-success" title="Run backtest"
                                 {% if not db_configured %}disabled{% endif %}>
                                 <i class="bi bi-play-fill"></i>
@@ -272,6 +307,7 @@
                 <th>Version</th>
                 <th>Status</th>
                 <th>Symbol</th>
+                <th>Period</th>
                 <th>Metrics</th>
                 <th>Parameters</th>
                 <th>Started</th>
@@ -312,6 +348,25 @@
                     <span class="badge bg-light text-dark border" style="font-size: 0.7rem;">{{ r.symbol }}</span>
                     {% else %}
                     <small class="text-muted">{{ default_symbol }}</small>
+                    {% endif %}
+                </td>
+                <td>
+                    {% set dr = r.date_range or (r.run_params.date_range if r.run_params is defined and r.run_params is mapping else '') or '1y' %}
+                    {% set dr_labels = {'0m': '0M', '1m': '1M', '3m': '3M', '6m': '6M', '9m': '9M', '1y': '1Y'} %}
+                    {% if '@' in dr %}
+                        {% set parts = dr.split('@') %}
+                        {% set dur_label = dr_labels.get(parts[0], parts[0]) %}
+                        {% set off_label = dr_labels.get(parts[1], parts[1]) %}
+                        <span class="badge bg-purple text-white border" style="font-size: 0.65rem; background-color: #7952b3 !important;"
+                              title="{{ dur_label }} starting {{ off_label }} from data start">
+                            {{ dur_label }}@{{ off_label }}
+                        </span>
+                    {% else %}
+                        {% set colors = {'1m': 'bg-warning text-dark', '3m': 'bg-info text-white', '6m': 'bg-primary', '1y': 'bg-secondary'} %}
+                        <span class="badge {{ colors.get(dr, 'bg-secondary') }} border" style="font-size: 0.65rem;"
+                              title="Last {{ dr_labels.get(dr, dr) }} of data">
+                            {{ dr_labels.get(dr, dr) }}
+                        </span>
                     {% endif %}
                 </td>
                 <td>
@@ -447,6 +502,38 @@
                             <option value="__ALL__">All Symbols</option>
                         </select>
                         <div class="form-text">Select the symbol to run the backtest against.</div>
+                    </div>
+
+                    <!-- Date Range Selection -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Data Period</label>
+                        <div class="d-flex gap-2">
+                            <div class="flex-grow-1">
+                                <label class="form-label small text-muted mb-1">Duration</label>
+                                <select class="form-select date-range-selector" name="date_range_duration" id="modalDuration"
+                                        onchange="updateModalDateRange()">
+                                    <option value="1m">1 Month</option>
+                                    <option value="3m">3 Months</option>
+                                    <option value="6m">6 Months</option>
+                                    <option value="1y" selected>Full Year</option>
+                                </select>
+                            </div>
+                            <div class="flex-grow-1">
+                                <label class="form-label small text-muted mb-1">Start From</label>
+                                <select class="form-select" name="date_range_offset" id="modalOffset"
+                                        onchange="updateModalDateRange()">
+                                    <option value="" selected>End of data (most recent)</option>
+                                    <option value="0m">Beginning of data</option>
+                                    <option value="3m">+3 months from start</option>
+                                    <option value="6m">+6 months from start</option>
+                                    <option value="9m">+9 months from start</option>
+                                </select>
+                            </div>
+                        </div>
+                        <input type="hidden" name="date_range" id="modalDateRangeValue" value="1y">
+                        <div class="form-text" id="dateRangeHint">
+                            <span id="dateRangePreview">Using the full year of available data.</span>
+                        </div>
                     </div>
 
                     <!-- Parameters Table -->
@@ -652,6 +739,80 @@ function toggleOptRange(checkbox) {
 // ── Sync version play-button symbol with page-level selector ──
 function updateVersionSymbol(val) {
     document.querySelectorAll('.version-symbol-input').forEach(function(inp) { inp.value = val; });
+}
+
+// ── Sync version play-button date range with page-level selector ──
+function updateVersionDateRange(val) {
+    document.querySelectorAll('.version-daterange-input').forEach(function(inp) { inp.value = val; });
+}
+
+// ── Modal date range: combine duration + offset into a single code ──
+var _datasetDates = null;
+
+function updateModalDateRange() {
+    var duration = document.getElementById('modalDuration');
+    var offset = document.getElementById('modalOffset');
+    var hidden = document.getElementById('modalDateRangeValue');
+    var preview = document.getElementById('dateRangePreview');
+
+    if (!duration || !hidden) return;
+
+    var durVal = duration.value;
+    var offVal = offset ? offset.value : '';
+
+    var code;
+    if (offVal) {
+        // Compound: duration@offset (from data start)
+        code = durVal + '@' + offVal;
+    } else {
+        // Simple: measure back from data end
+        code = durVal;
+    }
+    hidden.value = code;
+
+    // Update preview text
+    var durLabels = {'1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': 'full year'};
+    var offLabels = {'0m': 'the beginning', '3m': '3 months in', '6m': '6 months in', '9m': '9 months in'};
+
+    if (offVal) {
+        var msg = durLabels[durVal] + ' of data, starting ' + offLabels[offVal];
+        if (_datasetDates && _datasetDates.first_date) {
+            msg += ' (from ' + _datasetDates.first_date + ')';
+        }
+        preview.textContent = msg + '.';
+    } else if (durVal === '1y') {
+        var msg = 'Using the full year of available data';
+        if (_datasetDates && _datasetDates.first_date && _datasetDates.last_date) {
+            msg += ' (' + _datasetDates.first_date + ' to ' + _datasetDates.last_date + ')';
+        }
+        preview.textContent = msg + '.';
+    } else {
+        var msg = 'Last ' + durLabels[durVal] + ' of available data';
+        if (_datasetDates && _datasetDates.last_date) {
+            msg += ' (ending ' + _datasetDates.last_date + ')';
+        }
+        preview.textContent = msg + '.';
+    }
+}
+
+// Fetch dataset dates for preview
+fetch('/api/dataset-dates')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.first_date && data.last_date) {
+            _datasetDates = data;
+            // Update date range selector options with actual dates
+            updateModalDateRange();
+            updateDateRangeTooltips();
+        }
+    })
+    .catch(function() {});
+
+function updateDateRangeTooltips() {
+    if (!_datasetDates) return;
+    document.querySelectorAll('.date-range-selector').forEach(function(sel) {
+        sel.title = 'Data: ' + _datasetDates.first_date + ' to ' + _datasetDates.last_date;
+    });
 }
 </script>
 {% endblock %}

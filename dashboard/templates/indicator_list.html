@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Indicator Library — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item active">Indicator Library</li>
+    </ol>
+</nav>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        <h2 class="fw-bold mb-1">Indicator Library</h2>
+        <p class="text-muted mb-0">Reusable AFL indicator modules for strategy composition</p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if show_import %}
+        <form method="POST" action="/indicators/import">
+            <button type="submit" class="btn btn-outline-secondary">
+                <i class="bi bi-download me-1"></i>Import Existing
+            </button>
+        </form>
+        {% endif %}
+        <a href="/indicators/create" class="btn btn-primary">
+            <i class="bi bi-plus-lg me-1"></i>New Indicator
+        </a>
+    </div>
+</div>
+
+<!-- ── Indicator Grid ─────────────────────────────────── -->
+{% if not indicators %}
+<div class="card mb-5">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-puzzle text-muted" style="font-size: 3rem;"></i>
+        <p class="text-muted mt-3 mb-2">No indicators yet.</p>
+        <p class="text-muted small">Create a new indicator or import existing AFL files.</p>
+        <div class="d-flex gap-2 justify-content-center">
+            {% if show_import %}
+            <form method="POST" action="/indicators/import">
+                <button type="submit" class="btn btn-outline-primary">
+                    <i class="bi bi-download me-1"></i>Import from Documents
+                </button>
+            </form>
+            {% endif %}
+            <a href="/indicators/create" class="btn btn-primary">
+                <i class="bi bi-plus-lg me-1"></i>Create New
+            </a>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="row g-3 mb-5">
+    {% for ind in indicators %}
+    <div class="col-md-6 col-lg-4">
+        <div class="card h-100">
+            <div class="card-body d-flex flex-column">
+                <div class="d-flex align-items-start justify-content-between mb-2">
+                    <div>
+                        <h6 class="fw-bold mb-0">{{ ind.display_name }}</h6>
+                        <code class="small text-muted">{{ ind.filename }}</code>
+                    </div>
+                    {% if ind.indicator_type == 'include' %}
+                    <span class="badge bg-success">Include</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">Standalone</span>
+                    {% endif %}
+                </div>
+
+                {% if ind.description %}
+                <p class="text-muted small mb-2">{{ ind.description|truncate(120) }}</p>
+                {% endif %}
+
+                <div class="d-flex gap-2 flex-wrap mb-2">
+                    {% if ind.params %}
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-sliders me-1"></i>{{ ind.params|length }} param{{ 's' if ind.params|length != 1 }}
+                    </span>
+                    {% endif %}
+                    {% if ind.output_vars %}
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-box-arrow-right me-1"></i>{{ ind.output_vars|length }} output{{ 's' if ind.output_vars|length != 1 }}
+                    </span>
+                    {% endif %}
+                    {% if ind.required_inputs %}
+                    <span class="badge bg-light text-dark border">
+                        <i class="bi bi-box-arrow-in-right me-1"></i>{{ ind.required_inputs|length }} input{{ 's' if ind.required_inputs|length != 1 }}
+                    </span>
+                    {% endif %}
+                </div>
+
+                {% if ind.required_inputs %}
+                <small class="text-muted mb-1">
+                    Requires: {{ ind.required_inputs|map(attribute='var_name')|join(', ') }}
+                </small>
+                {% endif %}
+
+                {% if ind.output_vars %}
+                <small class="text-muted mb-2">
+                    Outputs: {{ ind.output_vars|join(', ') }}
+                </small>
+                {% endif %}
+
+                <div class="mt-auto pt-2 d-flex justify-content-between align-items-center">
+                    <small class="text-muted">{{ ind.size_kb }} KB</small>
+                    <a href="/indicators/{{ ind.filename }}" class="btn btn-sm btn-outline-primary">
+                        Edit <i class="bi bi-arrow-right ms-1"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

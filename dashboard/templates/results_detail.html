@@ -146,6 +146,31 @@
         vertical-align: middle;
     }
 
+    /* ── Column Stats button in header ──────────────── */
+    .bt-stats-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px; height: 18px;
+        border: none;
+        background: transparent;
+        color: #94a3b8;
+        font-size: 0.65rem;
+        padding: 0;
+        margin-left: 3px;
+        border-radius: 3px;
+        cursor: pointer;
+        vertical-align: middle;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+    th:hover .bt-stats-btn,
+    .bt-stats-btn:focus { opacity: 1; }
+    .bt-stats-btn:hover {
+        background: #e2e8f0;
+        color: #3b82f6;
+    }
+
     /* ── Column Stats Modal (enhanced) ────────────────── */
     #colStatsModal .modal-body { padding-bottom: 12px; }
     .col-stats-controls {
@@ -189,6 +214,42 @@
     /* Stats mini-table tabs */
     .col-stats-tabs { font-size: 0.75rem; margin-bottom: 6px; }
     .col-stats-tabs .btn { padding: 2px 10px; font-size: 0.73rem; }
+
+    /* ── Modal loading overlay ────────────────────────── */
+    .col-stats-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 48px 0;
+        gap: 12px;
+    }
+    .col-stats-loading .spinner-border { width: 2rem; height: 2rem; }
+    .col-stats-loading .loading-text {
+        font-size: 0.82rem;
+        color: #94a3b8;
+        font-weight: 500;
+    }
+    .col-stats-ready { display: none; }
+    .col-stats-ready.is-ready { display: block; }
+
+    /* ── Table sorting shimmer ────────────────────────── */
+    @keyframes shimmerPulse {
+        0%   { opacity: 1; }
+        50%  { opacity: 0.35; }
+        100% { opacity: 1; }
+    }
+    #btTradeTable.bt-sorting tbody {
+        animation: shimmerPulse 0.6s ease-in-out;
+        pointer-events: none;
+    }
+    #btTradeTable.bt-sorting thead th {
+        pointer-events: none;
+    }
+    #optResultsTable.bt-sorting tbody {
+        animation: shimmerPulse 0.6s ease-in-out;
+        pointer-events: none;
+    }
 
     /* ── Header Bar ───────────────────────────────────── */
     .header-bar {
@@ -958,9 +1019,12 @@
                                 {% for col in parsed.columns %}
                                 <th class="bt-sortable" data-col="{{ col }}"
                                     style="cursor: pointer; user-select: none;"
-                                    title="Click to sort · Double-click for stats">
+                                    title="Click to sort">
                                     {{ col }}
                                     <i class="bi bi-chevron-expand ms-1" style="font-size: 0.6rem; opacity: 0.4;"></i>
+                                    <button type="button" class="bt-stats-btn" data-stats-col="{{ col }}" title="Column statistics">
+                                        <i class="bi bi-bar-chart-fill"></i>
+                                    </button>
                                 </th>
                                 {% endfor %}
                             {% else %}
@@ -1074,40 +1138,51 @@
                 <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                {# Stats tabs: All / Wins / Losses #}
-                <div class="col-stats-tabs btn-group mb-2" role="group">
-                    <button type="button" class="btn btn-outline-secondary active" data-stats-filter="all">All</button>
-                    <button type="button" class="btn btn-outline-success" data-stats-filter="wins">Wins</button>
-                    <button type="button" class="btn btn-outline-danger" data-stats-filter="losses">Losses</button>
-                </div>
-                <table class="table table-sm table-borderless mb-3" style="font-size: 0.85rem;">
-                    <tbody id="colStatsBody"></tbody>
-                </table>
-
-                {# Histogram controls #}
-                <div class="col-stats-controls">
-                    <label>Bins:</label>
-                    <input type="range" id="colStatsBinSlider" min="5" max="80" value="20" class="form-range">
-                    <span class="bin-count" id="colStatsBinCount">20</span>
-                    <div class="btn-group btn-group-sm ms-auto" role="group">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="colStatsShowWL" title="Toggle Win/Loss split">
-                            <i class="bi bi-pie-chart me-1"></i>Win/Loss
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="colStatsZoomOut" title="Zoom out to full range">
-                            <i class="bi bi-zoom-out me-1"></i>Reset Zoom
-                        </button>
+                {# Loading spinner — shown immediately on open #}
+                <div class="col-stats-loading" id="colStatsLoading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
                     </div>
+                    <div class="loading-text">Computing statistics...</div>
                 </div>
-                <div class="col-stats-zoom-info d-none" id="colStatsZoomInfo">
-                    <i class="bi bi-search"></i>
-                    Viewing: <span class="zoom-range" id="colStatsZoomRange"></span>
-                    <small class="text-muted">(click a bar to zoom in, Shift+click to zoom out)</small>
-                </div>
-                <div style="height: 280px; position: relative;">
-                    <canvas id="colStatsChart"></canvas>
-                </div>
-                <div class="col-stats-legend" id="colStatsLegend">
-                    <span class="legend-all">All trades</span>
+
+                {# Content — hidden until chart is ready #}
+                <div class="col-stats-ready" id="colStatsReady">
+                    {# Stats tabs: All / Wins / Losses #}
+                    <div class="col-stats-tabs btn-group mb-2" role="group">
+                        <button type="button" class="btn btn-outline-secondary active" data-stats-filter="all">All</button>
+                        <button type="button" class="btn btn-outline-success" data-stats-filter="wins">Wins</button>
+                        <button type="button" class="btn btn-outline-danger" data-stats-filter="losses">Losses</button>
+                    </div>
+                    <table class="table table-sm table-borderless mb-3" style="font-size: 0.85rem;">
+                        <tbody id="colStatsBody"></tbody>
+                    </table>
+
+                    {# Histogram controls #}
+                    <div class="col-stats-controls">
+                        <label>Bins:</label>
+                        <input type="range" id="colStatsBinSlider" min="5" max="80" value="20" class="form-range">
+                        <span class="bin-count" id="colStatsBinCount">20</span>
+                        <div class="btn-group btn-group-sm ms-auto" role="group">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="colStatsShowWL" title="Toggle Win/Loss split">
+                                <i class="bi bi-pie-chart me-1"></i>Win/Loss
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm d-none" id="colStatsZoomOut" title="Zoom out to full range">
+                                <i class="bi bi-zoom-out me-1"></i>Reset Zoom
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-stats-zoom-info d-none" id="colStatsZoomInfo">
+                        <i class="bi bi-search"></i>
+                        Viewing: <span class="zoom-range" id="colStatsZoomRange"></span>
+                        <small class="text-muted">(click a bar to zoom in, Shift+click to zoom out)</small>
+                    </div>
+                    <div style="height: 280px; position: relative;">
+                        <canvas id="colStatsChart"></canvas>
+                    </div>
+                    <div class="col-stats-legend" id="colStatsLegend">
+                        <span class="legend-all">All trades</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1454,50 +1529,70 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // --- Table Sorting ---
+        // --- Table Sorting (cached) ---
         var optTable = document.getElementById('optResultsTable');
         if (optTable) {
+            var optTbody = optTable.querySelector('tbody');
+            var optDomRows = optTbody.querySelectorAll('tr');
+            // Build cache once
+            var _optRows = [];
+            for (var ri = 0; ri < optDomRows.length; ri++) {
+                var tr = optDomRows[ri];
+                var cells = [], nums = [];
+                for (var ci = 0; ci < tr.children.length; ci++) {
+                    var txt = tr.children[ci].textContent.trim();
+                    cells.push(txt);
+                    nums.push(parseFloat(txt));
+                }
+                _optRows.push({ el: tr, cells: cells, nums: nums });
+            }
+
             var sortDir = {};
+            var _optSortBusy = false;
             optTable.querySelectorAll('.opt-sortable').forEach(function(th) {
                 th.addEventListener('click', function() {
+                    if (_optSortBusy) return;
+                    _optSortBusy = true;
+                    var clickedTh = this;
                     var col = this.dataset.col;
                     var colIdx = Array.from(this.parentNode.children).indexOf(this);
-                    var tbody = optTable.querySelector('tbody');
-                    var rows = Array.from(tbody.querySelectorAll('tr'));
 
                     sortDir[col] = sortDir[col] === 'asc' ? 'desc' : 'asc';
                     var dir = sortDir[col];
 
-                    rows.sort(function(a, b) {
-                        var aVal = a.children[colIdx].textContent.trim();
-                        var bVal = b.children[colIdx].textContent.trim();
-                        var aNum = parseFloat(aVal);
-                        var bNum = parseFloat(bVal);
-                        if (!isNaN(aNum) && !isNaN(bNum)) {
-                            return dir === 'asc' ? aNum - bNum : bNum - aNum;
+                    optTable.classList.add('bt-sorting');
+
+                    requestAnimationFrame(function() {
+                        _optRows.sort(function(a, b) {
+                            var aN = a.nums[colIdx], bN = b.nums[colIdx];
+                            if (!isNaN(aN) && !isNaN(bN)) {
+                                return dir === 'asc' ? aN - bN : bN - aN;
+                            }
+                            return dir === 'asc' ? a.cells[colIdx].localeCompare(b.cells[colIdx]) : b.cells[colIdx].localeCompare(a.cells[colIdx]);
+                        });
+
+                        var frag = document.createDocumentFragment();
+                        for (var i = 0; i < _optRows.length; i++) {
+                            _optRows[i].el.children[0].textContent = i + 1;
+                            _optRows[i].el.classList.remove('table-success');
+                            frag.appendChild(_optRows[i].el);
                         }
-                        return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                    });
+                        optTbody.appendChild(frag);
+                        if (dir === 'desc') {
+                            _optRows[0].el.classList.add('table-success');
+                        }
 
-                    // Re-number and re-append
-                    rows.forEach(function(row, i) {
-                        row.children[0].textContent = i + 1;
-                        // Highlight best row (first row when sorted by profit desc)
-                        row.classList.remove('table-success');
-                        tbody.appendChild(row);
-                    });
-                    if (dir === 'desc') {
-                        rows[0].classList.add('table-success');
-                    }
+                        optTable.querySelectorAll('.opt-sortable i').forEach(function(icon) {
+                            icon.className = 'bi bi-chevron-expand ms-1';
+                            icon.style.opacity = '0.4';
+                        });
+                        var icon = clickedTh.querySelector('i');
+                        icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
+                        icon.style.opacity = '1';
 
-                    // Update sort icons
-                    optTable.querySelectorAll('.opt-sortable i').forEach(function(icon) {
-                        icon.className = 'bi bi-chevron-expand ms-1';
-                        icon.style.opacity = '0.4';
+                        optTable.classList.remove('bt-sorting');
+                        _optSortBusy = false;
                     });
-                    var icon = this.querySelector('i');
-                    icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
-                    icon.style.opacity = '1';
                 });
             });
         }
@@ -1505,78 +1600,179 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 
     /* ═══════════════════════════════════════════════════════
-       BACKTEST TABLE — Sorting & Column Statistics
+       BACKTEST TABLE — Cached Data Layer + Sorting + Stats
+       ═══════════════════════════════════════════════════════
+       Performance: all cell values are parsed ONCE into a JS
+       cache on page load.  Sorting and histogram read from
+       the cache — zero DOM reads on user interaction.
        ═══════════════════════════════════════════════════════ */
     (function() {
         var btTable = document.getElementById('btTradeTable');
         if (!btTable) return;
 
-        // --- Sorting (single-click) ---
+        var tbody = btTable.querySelector('tbody');
+        var headerCells = btTable.querySelectorAll('thead tr th');
+        var numCols = headerCells.length;
+
+        // ── Build cache: parse every cell value once ──
+        var _rows = [];          // [{el, cells: [val,...], nums: [float|NaN,...], profit, isWin}]
+        var domRows = tbody.querySelectorAll('tr');
+        for (var ri = 0; ri < domRows.length; ri++) {
+            var tr = domRows[ri];
+            var cells = [];
+            var nums = [];
+            var ch = tr.children;
+            for (var ci = 0; ci < ch.length; ci++) {
+                var txt = ch[ci].textContent.trim();
+                cells.push(txt);
+                nums.push(parseFloat(txt));
+            }
+            var profit = parseFloat(tr.dataset.profit);
+            _rows.push({
+                el: tr,
+                cells: cells,
+                nums: nums,
+                profit: profit,
+                isWin: !isNaN(profit) ? profit > 0 : null
+            });
+        }
+
+        // ── Sorting (single-click) — reads from cache ──
         var btSortDir = {};
+        var _sortBusy = false;
         btTable.querySelectorAll('.bt-sortable').forEach(function(th) {
             th.addEventListener('click', function() {
+                if (_sortBusy) return;
+                _sortBusy = true;
+                var clickedTh = this;
                 var col = this.dataset.col;
                 var colIdx = Array.from(this.parentNode.children).indexOf(this);
-                var tbody = btTable.querySelector('tbody');
-                var rows = Array.from(tbody.querySelectorAll('tr'));
 
                 btSortDir[col] = btSortDir[col] === 'asc' ? 'desc' : 'asc';
                 var dir = btSortDir[col];
 
-                rows.sort(function(a, b) {
-                    var aVal = a.children[colIdx] ? a.children[colIdx].textContent.trim() : '';
-                    var bVal = b.children[colIdx] ? b.children[colIdx].textContent.trim() : '';
-                    var aNum = parseFloat(aVal);
-                    var bNum = parseFloat(bVal);
-                    if (!isNaN(aNum) && !isNaN(bNum)) {
-                        return dir === 'asc' ? aNum - bNum : bNum - aNum;
+                // Show shimmer — let browser paint, then sort in next frame
+                btTable.classList.add('bt-sorting');
+
+                requestAnimationFrame(function() {
+                    // Sort the cache array (no DOM reads)
+                    _rows.sort(function(a, b) {
+                        var aN = a.nums[colIdx], bN = b.nums[colIdx];
+                        if (!isNaN(aN) && !isNaN(bN)) {
+                            return dir === 'asc' ? aN - bN : bN - aN;
+                        }
+                        var aV = a.cells[colIdx], bV = b.cells[colIdx];
+                        return dir === 'asc' ? aV.localeCompare(bV) : bV.localeCompare(aV);
+                    });
+
+                    // Batch DOM update with DocumentFragment
+                    var frag = document.createDocumentFragment();
+                    for (var i = 0; i < _rows.length; i++) {
+                        _rows[i].el.children[0].textContent = i + 1;
+                        frag.appendChild(_rows[i].el);
                     }
-                    return dir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                });
+                    tbody.appendChild(frag);
 
-                rows.forEach(function(row, i) {
-                    row.children[0].textContent = i + 1;
-                    tbody.appendChild(row);
-                });
+                    // Update sort icons
+                    btTable.querySelectorAll('.bt-sortable i').forEach(function(icon) {
+                        icon.className = 'bi bi-chevron-expand ms-1';
+                        icon.style.opacity = '0.4';
+                    });
+                    var icon = clickedTh.querySelector('i');
+                    icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
+                    icon.style.opacity = '1';
 
-                // Update sort icons
-                btTable.querySelectorAll('.bt-sortable i').forEach(function(icon) {
-                    icon.className = 'bi bi-chevron-expand ms-1';
-                    icon.style.opacity = '0.4';
+                    // Remove shimmer after animation completes
+                    btTable.classList.remove('bt-sorting');
+                    _sortBusy = false;
                 });
-                var icon = this.querySelector('i');
-                icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
-                icon.style.opacity = '1';
             });
 
-            // --- Column Statistics (double-click) → enhanced histogram ---
-            th.addEventListener('dblclick', function(e) {
+        });
+
+        // ── Column Statistics — triggered by stats button click ──
+        btTable.querySelectorAll('.bt-stats-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.stopPropagation(); // prevent sort
                 e.preventDefault();
-                var col = this.dataset.col;
-                var colIdx = Array.from(this.parentNode.children).indexOf(this);
-                var tbody = btTable.querySelector('tbody');
-                var rows = Array.from(tbody.querySelectorAll('tr'));
+                var th = this.closest('th');
+                var col = th.dataset.col;
+                var colIdx = Array.from(th.parentNode.children).indexOf(th);
 
-                // Collect numeric values + win/loss status from each row
-                var entries = [];   // {value, isWin}
-                rows.forEach(function(row) {
-                    var cell = row.children[colIdx];
-                    if (!cell) return;
-                    var v = parseFloat(cell.textContent.trim());
-                    if (isNaN(v)) return;
-                    var profit = parseFloat(row.dataset.profit);
-                    var isWin = !isNaN(profit) ? profit > 0 : null;
-                    entries.push({ value: v, isWin: isWin });
-                });
-                if (entries.length === 0) return;
+                // Collect entries from cache (zero DOM reads)
+                // Try numeric first; fall back to HH:MM time parsing
+                var entries = [];
+                var isTimeParsed = false;
+                for (var i = 0; i < _rows.length; i++) {
+                    var v = _rows[i].nums[colIdx];
+                    if (!isNaN(v)) {
+                        entries.push({ value: v, isWin: _rows[i].isWin });
+                    }
+                }
+                if (entries.length === 0) {
+                    // Try HH:MM or H:MM time format → decimal hours
+                    var timeRe = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+                    for (var i = 0; i < _rows.length; i++) {
+                        var txt = _rows[i].cells[colIdx];
+                        var m = timeRe.exec(txt);
+                        if (m) {
+                            var hrs = parseInt(m[1]) + parseInt(m[2]) / 60 + (m[3] ? parseInt(m[3]) / 3600 : 0);
+                            entries.push({ value: hrs, isWin: _rows[i].isWin });
+                        }
+                    }
+                    if (entries.length > 0) isTimeParsed = true;
+                }
+                if (entries.length === 0) {
+                    // No numeric/time data — show message in modal
+                    var loadingEl = document.getElementById('colStatsLoading');
+                    var readyEl = document.getElementById('colStatsReady');
+                    loadingEl.innerHTML = '<i class="bi bi-info-circle text-muted" style="font-size:2rem;"></i>' +
+                        '<div class="loading-text">No numeric data in <strong>' + col + '</strong></div>';
+                    readyEl.classList.remove('is-ready');
+                    document.getElementById('colStatsTitle').textContent = col;
+                    var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('colStatsModal'));
+                    modal.show();
+                    // Reset loading content when modal closes
+                    document.getElementById('colStatsModal').addEventListener('hidden.bs.modal', function resetLoading() {
+                        loadingEl.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>' +
+                            '<div class="loading-text">Computing statistics...</div>';
+                        document.getElementById('colStatsModal').removeEventListener('hidden.bs.modal', resetLoading);
+                    });
+                    return;
+                }
 
-                // ── State for the interactive histogram ──
+                // ── Show modal with loading spinner immediately ──
+                var loadingEl = document.getElementById('colStatsLoading');
+                var readyEl = document.getElementById('colStatsReady');
+                // Reset to spinner (may have been overwritten by "no data" message)
+                loadingEl.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>' +
+                    '<div class="loading-text">Computing statistics...</div>';
+                loadingEl.style.display = '';
+                readyEl.classList.remove('is-ready');
+                document.getElementById('colStatsTitle').textContent = col + ' \u2014 Distribution';
+
+                // Destroy previous chart before showing spinner
+                if (window._colStatsChartInstance) {
+                    window._colStatsChartInstance.destroy();
+                    window._colStatsChartInstance = null;
+                }
+
+                var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('colStatsModal'));
+                modal.show();
+
+                // ── Defer heavy work so spinner paints first ──
+                requestAnimationFrame(function() { setTimeout(function() {
+
+                // State for the interactive histogram
                 var allEntries = entries;
-                var fullMin = Math.min.apply(null, entries.map(function(e) { return e.value; }));
-                var fullMax = Math.max.apply(null, entries.map(function(e) { return e.value; }));
-                var zoomStack = [];  // stack of {lo, hi} ranges
+                var fullMin = Infinity, fullMax = -Infinity;
+                for (var i = 0; i < entries.length; i++) {
+                    if (entries[i].value < fullMin) fullMin = entries[i].value;
+                    if (entries[i].value > fullMax) fullMax = entries[i].value;
+                }
+                var zoomStack = [];
                 var showWinLoss = false;
-                var currentFilter = 'all';  // 'all', 'wins', 'losses'
+                var currentFilter = 'all';
 
                 // Refs
                 var canvas = document.getElementById('colStatsChart');
@@ -1588,9 +1784,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 var wlBtn = document.getElementById('colStatsShowWL');
                 var legendEl = document.getElementById('colStatsLegend');
 
+                // Pre-split win/loss arrays once for fast filter
+                var winEntries = [], lossEntries = [];
+                for (var i = 0; i < allEntries.length; i++) {
+                    if (allEntries[i].isWin === true) winEntries.push(allEntries[i]);
+                    else if (allEntries[i].isWin === false) lossEntries.push(allEntries[i]);
+                }
+
                 function getFilteredEntries() {
-                    if (currentFilter === 'wins') return allEntries.filter(function(e) { return e.isWin === true; });
-                    if (currentFilter === 'losses') return allEntries.filter(function(e) { return e.isWin === false; });
+                    if (currentFilter === 'wins') return winEntries;
+                    if (currentFilter === 'losses') return lossEntries;
                     return allEntries;
                 }
 
@@ -1600,17 +1803,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 function computeStats(vals) {
-                    var sorted = vals.slice().sort(function(a, b) { return a - b; });
                     var n = vals.length;
                     if (n === 0) return null;
-                    var sum = vals.reduce(function(a, b) { return a + b; }, 0);
+                    var sorted = vals.slice().sort(function(a, b) { return a - b; });
+                    var sum = 0;
+                    for (var i = 0; i < n; i++) sum += vals[i];
                     var mean = sum / n;
                     var med = n % 2 === 0 ? (sorted[n/2-1] + sorted[n/2]) / 2 : sorted[Math.floor(n/2)];
-                    var variance = vals.reduce(function(a, v) { return a + (v-mean)*(v-mean); }, 0) / n;
-                    return { count: n, mean: mean, median: med, min: sorted[0], max: sorted[n-1], stdDev: Math.sqrt(variance) };
+                    var vari = 0;
+                    for (var i = 0; i < n; i++) { var d = vals[i] - mean; vari += d * d; }
+                    return { count: n, mean: mean, median: med, min: sorted[0], max: sorted[n-1], stdDev: Math.sqrt(vari / n) };
                 }
 
                 function fmtStat(v) {
+                    if (isTimeParsed) {
+                        // Convert decimal hours back to HH:MM
+                        var h = Math.floor(v);
+                        var m = Math.round((v - h) * 60);
+                        if (m === 60) { h++; m = 0; }
+                        return h + ':' + (m < 10 ? '0' : '') + m;
+                    }
                     if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, {maximumFractionDigits: 2});
                     if (Math.abs(v) >= 1) return v.toFixed(2);
                     return v.toFixed(4);
@@ -1618,23 +1830,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 function updateStatsTable() {
                     var filtered = getFilteredEntries();
-                    var vals = filtered.map(function(e) { return e.value; });
+                    var vals = [];
+                    for (var i = 0; i < filtered.length; i++) vals.push(filtered[i].value);
                     var s = computeStats(vals);
                     if (!s) {
                         document.getElementById('colStatsBody').innerHTML = '<tr><td class="text-muted">No data</td></tr>';
                         return;
                     }
-                    var statsHtml = [
-                        ['Count', s.count],
-                        ['Mean', fmtStat(s.mean)],
-                        ['Median', fmtStat(s.median)],
-                        ['Min', fmtStat(s.min)],
-                        ['Max', fmtStat(s.max)],
-                        ['Std Dev', fmtStat(s.stdDev)]
+                    document.getElementById('colStatsBody').innerHTML = [
+                        ['Count', s.count], ['Mean', fmtStat(s.mean)], ['Median', fmtStat(s.median)],
+                        ['Min', fmtStat(s.min)], ['Max', fmtStat(s.max)], ['Std Dev', fmtStat(s.stdDev)]
                     ].map(function(r) {
                         return '<tr><td class="text-muted" style="width:40%;">' + r[0] + '</td><td class="fw-semibold">' + r[1] + '</td></tr>';
                     }).join('');
-                    document.getElementById('colStatsBody').innerHTML = statsHtml;
                 }
 
                 function renderHistogram() {
@@ -1644,69 +1852,48 @@ document.addEventListener('DOMContentLoaded', function() {
                     var lo = range.lo, hi = range.hi;
                     var binW = (hi - lo) / numBins || 1;
 
-                    // Filter entries to current range
                     var filtered = getFilteredEntries();
-                    var inRange = filtered.filter(function(e) { return e.value >= lo && e.value <= hi; });
-
-                    // Build bin data
-                    var binLabels = [];
                     var binsAll = new Array(numBins).fill(0);
                     var binsWin = new Array(numBins).fill(0);
                     var binsLoss = new Array(numBins).fill(0);
+                    var inRangeCount = 0, inRangeWins = 0, inRangeLosses = 0;
 
-                    for (var b = 0; b < numBins; b++) {
-                        var bLo = lo + b * binW;
-                        var bHi = bLo + binW;
-                        binLabels.push(fmtStat(bLo));
-                        inRange.forEach(function(e) {
-                            var inBin = (b === numBins - 1) ? (e.value >= bLo && e.value <= bHi) : (e.value >= bLo && e.value < bHi);
-                            if (inBin) {
-                                binsAll[b]++;
-                                if (e.isWin === true) binsWin[b]++;
-                                else if (e.isWin === false) binsLoss[b]++;
-                            }
-                        });
+                    for (var i = 0; i < filtered.length; i++) {
+                        var v = filtered[i].value;
+                        if (v < lo || v > hi) continue;
+                        inRangeCount++;
+                        var idx = Math.floor((v - lo) / binW);
+                        if (idx >= numBins) idx = numBins - 1;
+                        if (idx < 0) idx = 0;
+                        binsAll[idx]++;
+                        if (filtered[i].isWin === true) { binsWin[idx]++; inRangeWins++; }
+                        else if (filtered[i].isWin === false) { binsLoss[idx]++; inRangeLosses++; }
                     }
 
-                    // Build datasets
+                    var binLabels = new Array(numBins);
+                    for (var b = 0; b < numBins; b++) {
+                        binLabels[b] = fmtStat(lo + b * binW);
+                    }
+
                     var datasets;
                     if (showWinLoss) {
                         datasets = [
-                            {
-                                label: 'Wins',
-                                data: binsWin,
-                                backgroundColor: 'rgba(22, 163, 74, 0.7)',
-                                borderColor: 'rgba(22, 163, 74, 1)',
-                                borderWidth: 1
-                            },
-                            {
-                                label: 'Losses',
-                                data: binsLoss,
-                                backgroundColor: 'rgba(220, 38, 38, 0.7)',
-                                borderColor: 'rgba(220, 38, 38, 1)',
-                                borderWidth: 1
-                            }
+                            { label: 'Wins', data: binsWin, backgroundColor: 'rgba(22,163,74,0.7)', borderColor: 'rgba(22,163,74,1)', borderWidth: 1 },
+                            { label: 'Losses', data: binsLoss, backgroundColor: 'rgba(220,38,38,0.7)', borderColor: 'rgba(220,38,38,1)', borderWidth: 1 }
                         ];
-                        legendEl.innerHTML = '<span class="legend-win">Wins (' + inRange.filter(function(e){return e.isWin===true;}).length + ')</span>' +
-                            '<span class="legend-loss">Losses (' + inRange.filter(function(e){return e.isWin===false;}).length + ')</span>';
+                        legendEl.innerHTML = '<span class="legend-win">Wins (' + inRangeWins + ')</span>' +
+                            '<span class="legend-loss">Losses (' + inRangeLosses + ')</span>';
                     } else {
-                        datasets = [{
-                            label: 'Frequency',
-                            data: binsAll,
-                            backgroundColor: binsAll.map(function(_, i) {
-                                var mid = lo + (i + 0.5) * binW;
-                                return mid >= 0 ? 'rgba(59, 130, 246, 0.6)' : 'rgba(148, 163, 184, 0.5)';
-                            }),
-                            borderColor: binsAll.map(function(_, i) {
-                                var mid = lo + (i + 0.5) * binW;
-                                return mid >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(148, 163, 184, 0.8)';
-                            }),
-                            borderWidth: 1
-                        }];
-                        legendEl.innerHTML = '<span class="legend-all">All trades (' + inRange.length + ')</span>';
+                        var bgColors = new Array(numBins), bdColors = new Array(numBins);
+                        for (var i = 0; i < numBins; i++) {
+                            var mid = lo + (i + 0.5) * binW;
+                            bgColors[i] = mid >= 0 ? 'rgba(59,130,246,0.6)' : 'rgba(148,163,184,0.5)';
+                            bdColors[i] = mid >= 0 ? 'rgba(59,130,246,1)' : 'rgba(148,163,184,0.8)';
+                        }
+                        datasets = [{ label: 'Frequency', data: binsAll, backgroundColor: bgColors, borderColor: bdColors, borderWidth: 1 }];
+                        legendEl.innerHTML = '<span class="legend-all">All trades (' + inRangeCount + ')</span>';
                     }
 
-                    // Zoom UI
                     if (zoomStack.length > 0) {
                         zoomOutBtn.classList.remove('d-none');
                         zoomInfoEl.classList.remove('d-none');
@@ -1716,7 +1903,6 @@ document.addEventListener('DOMContentLoaded', function() {
                         zoomInfoEl.classList.add('d-none');
                     }
 
-                    // Destroy previous chart
                     if (window._colStatsChartInstance) window._colStatsChartInstance.destroy();
 
                     window._colStatsChartInstance = new Chart(canvas.getContext('2d'), {
@@ -1725,49 +1911,31 @@ document.addEventListener('DOMContentLoaded', function() {
                         options: {
                             responsive: true,
                             maintainAspectRatio: false,
-                            animation: { duration: 200 },
+                            animation: { duration: 120 },
                             plugins: {
                                 legend: { display: false },
                                 tooltip: {
                                     callbacks: {
                                         title: function(items) {
                                             var i = items[0].dataIndex;
-                                            var bLo = lo + i * binW;
-                                            var bHi = bLo + binW;
-                                            return fmtStat(bLo) + ' \u2014 ' + fmtStat(bHi);
+                                            return fmtStat(lo + i * binW) + ' \u2014 ' + fmtStat(lo + (i+1) * binW);
                                         }
                                     }
                                 }
                             },
                             scales: {
-                                y: {
-                                    beginAtZero: true,
-                                    stacked: showWinLoss,
-                                    ticks: { stepSize: 1, font: { size: 10 } },
-                                    title: { display: true, text: 'Trades', font: { size: 10 } }
-                                },
-                                x: {
-                                    stacked: showWinLoss,
-                                    ticks: { font: { size: 9 }, maxRotation: 45 },
-                                    title: { display: true, text: col, font: { size: 10 } }
-                                }
+                                y: { beginAtZero: true, stacked: showWinLoss, ticks: { stepSize: 1, font: { size: 10 } }, title: { display: true, text: 'Trades', font: { size: 10 } } },
+                                x: { stacked: showWinLoss, ticks: { font: { size: 9 }, maxRotation: 45 }, title: { display: true, text: col, font: { size: 10 } } }
                             },
                             onClick: function(evt, elems) {
                                 if (!elems || elems.length === 0) return;
                                 var idx = elems[0].index;
                                 var bLo = lo + idx * binW;
                                 var bHi = bLo + binW;
-                                // Check if any data in this sub-range
-                                var sub = inRange.filter(function(e) { return e.value >= bLo && e.value <= bHi; });
-                                if (sub.length < 2) return;
+                                if (binsAll[idx] < 2) return;
                                 if (evt.native && evt.native.shiftKey) {
-                                    // Shift+click = zoom out one level
-                                    if (zoomStack.length > 0) {
-                                        zoomStack.pop();
-                                        renderHistogram();
-                                    }
+                                    if (zoomStack.length > 0) { zoomStack.pop(); renderHistogram(); }
                                 } else {
-                                    // Click = zoom into this bin
                                     zoomStack.push({ lo: bLo, hi: bHi });
                                     renderHistogram();
                                 }
@@ -1776,29 +1944,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 }
 
-                // Title
-                document.getElementById('colStatsTitle').textContent = col + ' \u2014 Distribution';
+                slider.oninput = function() { binCountEl.textContent = this.value; renderHistogram(); };
+                wlBtn.onclick = function() { showWinLoss = !showWinLoss; this.classList.toggle('active', showWinLoss); renderHistogram(); };
+                zoomOutBtn.onclick = function() { zoomStack = []; renderHistogram(); };
 
-                // Slider handler
-                slider.oninput = function() {
-                    binCountEl.textContent = this.value;
-                    renderHistogram();
-                };
-
-                // Win/Loss toggle
-                wlBtn.onclick = function() {
-                    showWinLoss = !showWinLoss;
-                    this.classList.toggle('active', showWinLoss);
-                    renderHistogram();
-                };
-
-                // Zoom out button
-                zoomOutBtn.onclick = function() {
-                    zoomStack = [];
-                    renderHistogram();
-                };
-
-                // Stats filter tabs
                 document.querySelectorAll('[data-stats-filter]').forEach(function(btn) {
                     btn.addEventListener('click', function() {
                         document.querySelectorAll('[data-stats-filter]').forEach(function(b) { b.classList.remove('active'); });
@@ -1809,7 +1958,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     });
                 });
 
-                // Initial render
                 var initBins = Math.min(25, Math.max(8, Math.ceil(Math.sqrt(entries.length))));
                 slider.value = initBins;
                 currentFilter = 'all';
@@ -1822,8 +1970,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateStatsTable();
                 renderHistogram();
 
-                var modal = new bootstrap.Modal(document.getElementById('colStatsModal'));
-                modal.show();
+                // ── Swap loading → ready ──
+                loadingEl.style.display = 'none';
+                readyEl.classList.add('is-ready');
+
+                }, 16); }); // end rAF + setTimeout
             });
         });
     })();
@@ -1847,7 +1998,8 @@ document.addEventListener('DOMContentLoaded', function() {
         var defaultCols = ['symbol','trade','date','price','ex. date','ex. price',
                            'profit','% chg','shares','contracts','position value',
                            'cum. profit','# bars','profit/bar',
-                           'temaslope@entry','1stderiv@entry','2ndderiv@entry'];
+                           'temaslope@entry','1stderiv@entry','2ndderiv@entry',
+                           'timeofday@entry'];
 
         // localStorage key based on current page (per-run persistence)
         var storageKey = 'bt_col_vis_' + window.location.pathname;
@@ -1861,21 +2013,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
         var checks = menu.querySelectorAll('.col-toggle-check');
 
-        function applyVisibility() {
-            var colIndices = [];
-            checks.forEach(function(cb) {
-                var idx = parseInt(cb.dataset.colIndex);  // 1-based (col 0 is #)
-                if (!cb.checked) colIndices.push(idx);
-            });
+        // CSS injection for column visibility — one <style> rule hides
+        // a column across ALL rows instantly (vs iterating every cell).
+        var colStyleEl = document.createElement('style');
+        document.head.appendChild(colStyleEl);
 
-            // Hide/show th and td for each hidden column index
-            var allRows = btTable.querySelectorAll('tr');
-            allRows.forEach(function(row) {
-                var cells = row.children;
-                for (var c = 1; c < cells.length; c++) {  // skip col 0 (#)
-                    cells[c].style.display = colIndices.indexOf(c) !== -1 ? 'none' : '';
+        function applyVisibility() {
+            // Build CSS rules for hidden columns (nth-child is 1-based)
+            var rules = [];
+            checks.forEach(function(cb) {
+                if (!cb.checked) {
+                    var nth = parseInt(cb.dataset.colIndex) + 1; // colIndex is 1-based relative to data cols, +1 for CSS nth-child (col 0 is #)
+                    rules.push('#btTradeTable th:nth-child(' + nth + '),#btTradeTable td:nth-child(' + nth + '){display:none}');
                 }
             });
+            colStyleEl.textContent = rules.join('\n');
 
             // Save to localStorage
             var vis = {};

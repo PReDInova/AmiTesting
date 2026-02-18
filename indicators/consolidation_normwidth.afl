@@ -1,0 +1,15 @@
+// ===========================================
+// ATR Indicator (for Consolidation Zone analysis)
+// ===========================================
+
+// ---- PARAMETERS ----
+atrLength = Param( "ATR Length", 20, 5, 100, 1 );
+
+// ---- CALCULATION ----
+atrValue = ATR( atrLength );
+
+// ---- PLOT ----
+Plot( atrValue, "ATR(" + NumToStr( atrLength, 1.0 ) + ")", colorCyan, styleLine | styleThick );
+
+// ---- TITLE ----
+Title = "ATR(" + NumToStr( atrLength, 1.0 ) + "): " + NumToStr( atrValue, 1.2 );

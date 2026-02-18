@@ -1,0 +1,108 @@
+// ===========================================
+// VWAP + DAILY STD DEV BANDS + CLOUDS
+// (VWAP + bands computed with configurable session resets)
+// ===========================================
+//
+// This indicator calculates VWAP (Volume Weighted Average Price)
+// and standard deviation bands, matching ThinkorSwim's VWAP implementation.
+// Session reset time is configurable for different trading sessions.
+//
+// INPUTS (expected to be defined before including this file):
+//   - vwStdev1, vwStdev2, vwStdev3: Standard deviation multipliers (typically 1.0, 2.0, 3.0)
+//   - sessionResetTime: (OPTIONAL) Time in HHMMSS format when session resets
+//                       If not defined, defaults to midnight (0) for EOD reset
+//                       Examples: 30000 = 3:00 AM (Asian), 180000 = 6:00 PM, 0 = Midnight
+//
+// OUTPUTS:
+//   - VWAP: Volume-weighted average price (resets at sessionResetTime)
+//   - devP: Session standard deviation
+//   - r1, r2, r3: Upper bands (VWAP + 1σ, 2σ, 3σ)
+//   - s1, s2, s3: Lower bands (VWAP - 1σ, 2σ, 3σ)
+// ===========================================
+
+// ---- VWAP (session reset at configurable time) ----
+// Using loop to exactly match TOS CompoundValue logic
+TP  = ( H + L + C ) / 3;  // Typical Price (same as TOS vwap per bar)
+Vol = Nz( V, 0 );
+
+// Check if sessionResetTime was defined by calling strategy file
+// If not, provide a default parameter (midnight = 0 for EOD reset)
+if( IsEmpty( sessionResetTime ) )
+{
+    sessionResetTime = Param( "Session Reset Time (HHMMSS)", 0, 0, 235959, 1 );
+}
+
+// Detect new session: crosses the session reset time
+// This detects when we transition from before reset time to after reset time
+tn = TimeNum();
+prevTime = Ref(tn, -1);
+
+// Handle midnight reset (sessionResetTime = 0) as a special case
+if( sessionResetTime == 0 )
+{
+    // Reset at calendar day change
+    NewSession = Day() != Ref(Day(), -1);
+}
+else
+{
+    // Reset when crossing the specified time ONLY
+    // For overnight sessions (like Asian 6PM-3AM), we do NOT want to reset at midnight
+    NewSession = (prevTime < sessionResetTime AND tn >= sessionResetTime);
+}
+
+// Alias for backward compatibility
+NewDay = NewSession;
+
+// Initialize arrays for session accumulation
+SesVol = Vol;
+SesPV  = Vol * TP;
+SesPV2 = Vol * TP * TP;
+
+// First bar is always start of a session (treat as NewDay)
+// This ensures consistency regardless of where the data starts
+if( BarCount > 0 )
+{
+    SesVol[0] = Vol[0];
+    SesPV[0]  = Vol[0] * TP[0];
+    SesPV2[0] = Vol[0] * TP[0] * TP[0];
+}
+
+// Loop to accumulate within session
+// At session boundaries, reset accumulation but maintain visual continuity
+for( i = 1; i < BarCount; i++ )
+{
+    if( NewDay[i] )
+    {
+        // Reset accumulation at start of new session
+        // VWAP will start fresh calculation from current bar
+        SesVol[i] = Vol[i];
+        SesPV[i]  = Vol[i] * TP[i];
+        SesPV2[i] = Vol[i] * TP[i] * TP[i];
+    }
+    else
+    {
+        // Accumulate within the session
+        SesVol[i] = SesVol[i-1] + Vol[i];
+        SesPV[i]  = SesPV[i-1] + Vol[i] * TP[i];
+        SesPV2[i] = SesPV2[i-1] + Vol[i] * TP[i] * TP[i];
+    }
+}
+
+// Avoid division by zero
+SesVolSafe = Max( SesVol, 1e-10 );
+
+// VWAP for the day (matches TOS: price = volumeVwapSum / volumeSum)
+VWAP = SesPV / SesVolSafe;
+
+// ---- DAILY deviation (volume-weighted variance matching TOS) ----
+// TOS formula: deviation = sqrt(max(volumeVwap2Sum / volumeSum - price^2, 0))
+variance = Max( (SesPV2 / SesVolSafe) - (VWAP * VWAP), 0 );
+devP = Sqrt( variance );
+
+// ---- Bands ----
+r1 = VWAP + vwStdev1 * devP;
+s1 = VWAP - vwStdev1 * devP;
+r2 = VWAP + vwStdev2 * devP;
+s2 = VWAP - vwStdev2 * devP;
+r3 = VWAP + vwStdev3 * devP;
+s3 = VWAP - vwStdev3 * devP;

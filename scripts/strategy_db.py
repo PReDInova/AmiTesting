@@ -157,6 +157,13 @@ def init_db(db_path: Path = None) -> None:
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+        # Add date_range column to backtest_runs (migration)
+        try:
+            conn.execute("ALTER TABLE backtest_runs ADD COLUMN date_range TEXT NOT NULL DEFAULT '1y'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # Create optimization_combos table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS optimization_combos (
@@ -557,6 +564,7 @@ def create_run(
     afl_content: str = "",
     params_json: str = "{}",
     symbol: str = "",
+    date_range: str = "1y",
     db_path: Path = None,
 ) -> str:
     """Create a new backtest run record. Returns the run UUID.
@@ -565,15 +573,16 @@ def create_run(
     ``afl_content`` should be the actual AFL code used for this run so the
     results page can display exactly what was executed.
     ``params_json`` stores a JSON string of run parameters (e.g. run_mode).
+    ``date_range`` stores the lookback period code (e.g. '1m', '3m', '6m', '1y').
     """
     run_id = _new_uuid()
     results_dir = f"results/{run_id}"
     conn = _get_connection(db_path)
     try:
         conn.execute(
-            """INSERT INTO backtest_runs (id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol, status, started_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)""",
-            (run_id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol),
+            """INSERT INTO backtest_runs (id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol, date_range, status, started_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP)""",
+            (run_id, version_id, strategy_id, results_dir, apx_file, afl_content, params_json, symbol, date_range),
         )
         conn.commit()
         return run_id

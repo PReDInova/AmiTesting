@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Batch Run — AmiTesting{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+        <li class="breadcrumb-item"><a href="/batch/history">Batch Runs</a></li>
+        <li class="breadcrumb-item active">{{ batch.name or batch.id[:12] }}</li>
+    </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex align-items-start justify-content-between mb-4">
+    <div>
+        <h2 class="fw-bold mb-1">{{ batch.name or 'Batch Run' }}</h2>
+        <p class="text-muted mb-1">
+            <code class="small">{{ batch.id }}</code>
+            <span class="mx-2">|</span>
+            Run Mode: <strong>{{ 'Optimization' if batch.run_mode == 4 else 'Backtest' }}</strong>
+        </p>
+        {% if batch.started_at %}
+        <small class="text-muted">Started {{ batch.started_at[:19] }}</small>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+        <span id="statusBadge">
+            {% if batch.status == "running" %}
+            <span class="badge bg-info fs-6"><span class="spinner-border spinner-border-sm me-1"></span>Running</span>
+            {% elif batch.status == "completed" %}
+            <span class="badge bg-success fs-6">Completed</span>
+            {% elif batch.status == "cancelled" %}
+            <span class="badge bg-warning text-dark fs-6">Cancelled</span>
+            {% elif batch.status == "failed" %}
+            <span class="badge bg-danger fs-6">Failed</span>
+            {% else %}
+            <span class="badge bg-secondary fs-6">{{ batch.status|title }}</span>
+            {% endif %}
+        </span>
+        {% if batch.status == "running" %}
+        <button class="btn btn-outline-danger btn-sm" id="cancelBtn" onclick="cancelBatch()">
+            <i class="bi bi-stop-fill me-1"></i>Cancel
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Progress -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold">Progress</span>
+            <span id="progressText">{{ batch.completed_count + batch.failed_count }} / {{ batch.total_count }}</span>
+        </div>
+        <div class="progress" style="height: 24px;">
+            {% set pct = ((batch.completed_count + batch.failed_count) / batch.total_count * 100) if batch.total_count > 0 else 0 %}
+            <div class="progress-bar bg-success" id="progressBarSuccess" role="progressbar"
+                 style="width: {{ (batch.completed_count / batch.total_count * 100) if batch.total_count > 0 else 0 }}%">
+                {{ batch.completed_count }} OK
+            </div>
+            {% if batch.failed_count > 0 %}
+            <div class="progress-bar bg-danger" id="progressBarFailed" role="progressbar"
+                 style="width: {{ (batch.failed_count / batch.total_count * 100) if batch.total_count > 0 else 0 }}%">
+                {{ batch.failed_count }} failed
+            </div>
+            {% endif %}
+        </div>
+        <div class="row g-3 mt-3">
+            <div class="col">
+                <div class="metric-card border-green">
+                    <div class="metric-value text-success" id="metricCompleted">{{ batch.completed_count }}</div>
+                    <div class="metric-label">Completed</div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="metric-card border-red">
+                    <div class="metric-value text-danger" id="metricFailed">{{ batch.failed_count }}</div>
+                    <div class="metric-label">Failed</div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="metric-card border-gray">
+                    <div class="metric-value" id="metricPending">{{ batch.total_count - batch.completed_count - batch.failed_count }}</div>
+                    <div class="metric-label">Pending</div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="metric-card border-blue">
+                    <div class="metric-value">{{ batch.total_count }}</div>
+                    <div class="metric-label">Total</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Summary (when completed) -->
+{% if batch.status in ("completed", "cancelled") and batch.results %}
+{% set completed_results = [] %}
+{% for sid, r in batch.results.items() if r.status == "completed" and r.metrics %}
+{% if r.metrics.total_trades is defined %}
+{% set _ = completed_results.append(r) %}
+{% endif %}
+{% endfor %}
+{% if completed_results|length > 0 %}
+<div class="row g-3 mb-4">
+    {% set profits = completed_results|map(attribute='metrics')|selectattr('total_profit', 'defined')|map(attribute='total_profit')|list %}
+    {% set win_rates = completed_results|map(attribute='metrics')|selectattr('win_rate', 'defined')|map(attribute='win_rate')|list %}
+    {% if profits %}
+    <div class="col-md-3">
+        <div class="callout-green">
+            <strong>Best Profit</strong><br>
+            <span class="fs-5 fw-bold">${{ "%.2f"|format(profits|max) }}</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="callout-red">
+            <strong>Worst Profit</strong><br>
+            <span class="fs-5 fw-bold">${{ "%.2f"|format(profits|min) }}</span>
+        </div>
+    </div>
+    {% endif %}
+    {% if win_rates %}
+    <div class="col-md-3">
+        <div class="callout-blue">
+            <strong>Best Win Rate</strong><br>
+            <span class="fs-5 fw-bold">{{ "%.1f"|format(win_rates|max) }}%</span>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="callout-amber">
+            <strong>Avg Win Rate</strong><br>
+            <span class="fs-5 fw-bold">{{ "%.1f"|format(win_rates|sum / win_rates|length) }}%</span>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Results Table -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="fw-bold mb-0">Strategy Results</h4>
+    {% if batch.status == "running" %}
+    <small class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Auto-refreshing...</small>
+    {% endif %}
+</div>
+
+<div class="card mb-4">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" id="resultsTable">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort="name" onclick="sortTable('name')" style="cursor:pointer;">
+                            Strategy <i class="bi bi-arrow-down-up text-muted small"></i>
+                        </th>
+                        <th>Status</th>
+                        <th class="sortable text-end" data-sort="trades" onclick="sortTable('trades')" style="cursor:pointer;">
+                            Trades <i class="bi bi-arrow-down-up text-muted small"></i>
+                        </th>
+                        <th class="sortable text-end" data-sort="profit" onclick="sortTable('profit')" style="cursor:pointer;">
+                            Total Profit <i class="bi bi-arrow-down-up text-muted small"></i>
+                        </th>
+                        <th class="sortable text-end" data-sort="winrate" onclick="sortTable('winrate')" style="cursor:pointer;">
+                            Win Rate <i class="bi bi-arrow-down-up text-muted small"></i>
+                        </th>
+                        <th class="text-end">Max Drawdown</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsBody">
+                    {% for sid in batch.strategy_ids %}
+                    {% set r = batch.results.get(sid, {}) if batch.results else {} %}
+                    {% set s = strategies.get(sid, {}) %}
+                    <tr data-strategy-id="{{ sid }}"
+                        data-name="{{ s.name|default(sid[:8])|lower }}"
+                        data-trades="{{ r.metrics.total_trades|default(0) if r.metrics is defined and r.metrics else 0 }}"
+                        data-profit="{{ r.metrics.total_profit|default(0) if r.metrics is defined and r.metrics else 0 }}"
+                        data-winrate="{{ r.metrics.win_rate|default(0) if r.metrics is defined and r.metrics else 0 }}">
+                        <td>
+                            <a href="/strategy/{{ sid }}" class="text-decoration-none fw-bold">
+                                {{ s.name|default(sid[:12] + '...') }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if r.status == "completed" %}
+                            <span class="badge bg-success">Completed</span>
+                            {% elif r.status == "failed" %}
+                            <span class="badge bg-danger">Failed</span>
+                            {% elif r.status == "running" %}
+                            <span class="badge bg-info"><span class="spinner-border spinner-border-sm me-1"></span>Running</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Pending</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if r.metrics is defined and r.metrics and r.metrics.total_trades is defined %}
+                            {{ r.metrics.total_trades }}
+                            {% else %}<span class="text-muted">--</span>{% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if r.metrics is defined and r.metrics and r.metrics.total_profit is defined %}
+                            <span class="{{ 'text-success' if r.metrics.total_profit > 0 else 'text-danger' if r.metrics.total_profit < 0 else '' }}">
+                                ${{ "%.2f"|format(r.metrics.total_profit) }}
+                            </span>
+                            {% else %}<span class="text-muted">--</span>{% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if r.metrics is defined and r.metrics and r.metrics.win_rate is defined %}
+                            {{ r.metrics.win_rate }}%
+                            {% else %}<span class="text-muted">--</span>{% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if r.metrics is defined and r.metrics and r.metrics.max_drawdown is defined %}
+                            <span class="text-danger">${{ "%.2f"|format(r.metrics.max_drawdown) }}</span>
+                            {% else %}<span class="text-muted">--</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if r.run_id is defined and r.run_id %}
+                            <a href="/run/{{ r.run_id }}" class="btn btn-sm btn-outline-primary">
+                                View <i class="bi bi-arrow-right ms-1"></i>
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    const batchId = "{{ batch.id }}";
+    const isRunning = {{ 'true' if batch.status == 'running' else 'false' }};
+    let pollTimer = null;
+    let currentSort = {col: null, asc: true};
+
+    // -- Auto-refresh while running --
+    if (isRunning) {
+        pollTimer = setInterval(pollStatus, 3000);
+    }
+
+    function pollStatus() {
+        fetch('/api/batch/' + batchId + '/status')
+            .then(r => r.json())
+            .then(data => {
+                updateUI(data);
+                if (data.status !== 'running') {
+                    clearInterval(pollTimer);
+                    // Reload page to get final state with proper template rendering
+                    setTimeout(() => location.reload(), 1000);
+                }
+            })
+            .catch(err => console.error('Poll error:', err));
+    }
+
+    function updateUI(data) {
+        // Update progress
+        const done = (data.completed_count || 0) + (data.failed_count || 0);
+        const total = data.total_count || 1;
+        const el = document.getElementById('progressText');
+        if (el) el.textContent = done + ' / ' + total;
+
+        const pctOk = ((data.completed_count || 0) / total * 100);
+        const pctFail = ((data.failed_count || 0) / total * 100);
+        const barOk = document.getElementById('progressBarSuccess');
+        const barFail = document.getElementById('progressBarFailed');
+        if (barOk) {
+            barOk.style.width = pctOk + '%';
+            barOk.textContent = (data.completed_count || 0) + ' OK';
+        }
+        if (barFail) {
+            barFail.style.width = pctFail + '%';
+            barFail.textContent = (data.failed_count || 0) + ' failed';
+        }
+
+        // Update metric cards
+        const mc = document.getElementById('metricCompleted');
+        const mf = document.getElementById('metricFailed');
+        const mp = document.getElementById('metricPending');
+        if (mc) mc.textContent = data.completed_count || 0;
+        if (mf) mf.textContent = data.failed_count || 0;
+        if (mp) mp.textContent = total - done;
+
+        // Update table rows from results
+        if (data.results) {
+            for (const [sid, r] of Object.entries(data.results)) {
+                const row = document.querySelector(`tr[data-strategy-id="${sid}"]`);
+                if (!row) continue;
+
+                // Update status cell
+                const statusCell = row.children[1];
+                if (r.status === 'completed') {
+                    statusCell.innerHTML = '<span class="badge bg-success">Completed</span>';
+                } else if (r.status === 'failed') {
+                    statusCell.innerHTML = '<span class="badge bg-danger">Failed</span>';
+                }
+
+                // Update metrics cells
+                if (r.metrics) {
+                    const m = r.metrics;
+                    row.children[2].textContent = m.total_trades !== undefined ? m.total_trades : '--';
+                    if (m.total_profit !== undefined) {
+                        const cls = m.total_profit > 0 ? 'text-success' : m.total_profit < 0 ? 'text-danger' : '';
+                        row.children[3].innerHTML = `<span class="${cls}">$${m.total_profit.toFixed(2)}</span>`;
+                    }
+                    row.children[4].textContent = m.win_rate !== undefined ? m.win_rate + '%' : '--';
+                    if (m.max_drawdown !== undefined) {
+                        row.children[5].innerHTML = `<span class="text-danger">$${m.max_drawdown.toFixed(2)}</span>`;
+                    }
+                    // Update data attributes for sorting
+                    row.dataset.trades = m.total_trades || 0;
+                    row.dataset.profit = m.total_profit || 0;
+                    row.dataset.winrate = m.win_rate || 0;
+                }
+
+                // Update actions cell
+                if (r.run_id) {
+                    row.children[6].innerHTML = `<a href="/run/${r.run_id}" class="btn btn-sm btn-outline-primary">View <i class="bi bi-arrow-right ms-1"></i></a>`;
+                }
+            }
+        }
+    }
+
+    // -- Table sorting --
+    window.sortTable = function(col) {
+        if (currentSort.col === col) {
+            currentSort.asc = !currentSort.asc;
+        } else {
+            currentSort.col = col;
+            currentSort.asc = col === 'name';  // name sorts A-Z by default, numbers sort high-low
+        }
+
+        const tbody = document.getElementById('resultsBody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        rows.sort(function(a, b) {
+            let va, vb;
+            if (col === 'name') {
+                va = a.dataset.name || '';
+                vb = b.dataset.name || '';
+                return currentSort.asc ? va.localeCompare(vb) : vb.localeCompare(va);
+            } else {
+                va = parseFloat(a.dataset[col]) || 0;
+                vb = parseFloat(b.dataset[col]) || 0;
+                return currentSort.asc ? va - vb : vb - va;
+            }
+        });
+
+        rows.forEach(r => tbody.appendChild(r));
+    };
+
+    // -- Cancel batch --
+    window.cancelBatch = function() {
+        if (!confirm('Cancel the running batch? The current strategy will finish first.')) return;
+        fetch('/api/batch/' + batchId + '/cancel', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                const btn = document.getElementById('cancelBtn');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = 'Cancelling...';
+                }
+            });
+    };
+})();
+</script>
+{% endblock %}

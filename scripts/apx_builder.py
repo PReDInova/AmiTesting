@@ -20,6 +20,8 @@ endings, and quote style.
 import sys
 import uuid
 import logging
+from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,64 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _compute_date_range(date_range: str, dataset_start: str, dataset_end: str) -> tuple:
+    """Compute from_date and to_date from a date range code and dataset bounds.
+
+    The date_range code can be a simple period ('1m', '3m', '6m', '1y') which
+    measures back from the dataset end, or a compound code like '1m@6m' meaning
+    "1 month of data starting 6 months from the dataset start".
+
+    Parameters
+    ----------
+    date_range : str
+        Period code.  Simple: '1m', '3m', '6m', '1y'.
+        Compound: '<duration>@<offset>' e.g. '1m@6m' = 1 month starting 6
+        months after dataset start.
+    dataset_start : str
+        First available date in the dataset (YYYY-MM-DD).
+    dataset_end : str
+        Last available date in the dataset (YYYY-MM-DD).
+
+    Returns
+    -------
+    tuple[str, str]
+        (from_date, to_date) as 'YYYY-MM-DD' strings.
+    """
+    ds_start = datetime.strptime(dataset_start, "%Y-%m-%d").date()
+    ds_end = datetime.strptime(dataset_end, "%Y-%m-%d").date()
+
+    period_map = {"0m": 0, "1m": 1, "3m": 3, "6m": 6, "9m": 9, "1y": 12}
+
+    if "@" in date_range:
+        # Compound: duration@offset  e.g. "1m@6m"
+        duration_code, offset_code = date_range.split("@", 1)
+        duration_months = period_map.get(duration_code, 1)
+        offset_months = period_map.get(offset_code, 0)
+        from_dt = ds_start + relativedelta(months=offset_months)
+        to_dt = from_dt + relativedelta(months=duration_months)
+        # Clamp to dataset bounds
+        to_dt = min(to_dt, ds_end)
+        from_dt = min(from_dt, ds_end)
+    else:
+        # Simple: measure back from dataset end
+        months = period_map.get(date_range, 12)
+        to_dt = ds_end
+        from_dt = ds_end - relativedelta(months=months)
+        # Clamp to dataset start
+        from_dt = max(from_dt, ds_start)
+
+    return from_dt.strftime("%Y-%m-%d"), to_dt.strftime("%Y-%m-%d")
+
+
+def _replace_xml_tag(output: bytes, open_tag: bytes, close_tag: bytes, value: str) -> bytes:
+    """Replace the content between an XML open/close tag pair in raw bytes."""
+    if open_tag in output and close_tag in output:
+        start = output.find(open_tag) + len(open_tag)
+        end = output.find(close_tag, start)
+        output = output[:start] + value.encode("iso-8859-1") + output[end:]
+    return output
+
+
 def build_apx(
     afl_path: str,
     output_apx_path: str,
@@ -50,6 +110,9 @@ def build_apx(
     run_id: str = None,
     periodicity: int = None,
     symbol: str = None,
+    date_range: str = None,
+    dataset_start: str = None,
+    dataset_end: str = None,
     **kwargs,
 ) -> str:
     """Build an AmiBroker .apx project file from a template and AFL source.
@@ -73,6 +136,14 @@ def build_apx(
         Override the backtest periodicity in the APX.  AmiBroker APX values:
         0=Tick, 5=1-min, 6=5-min, 7=15-min, 9=Hourly, 11=Daily, 12=Weekly.
         When ``None`` the template value is kept unchanged.
+    date_range : str, optional
+        Period code for the backtest window (e.g. '1m', '3m', '6m', '1y',
+        or '1m@6m' for 1 month starting 6 months into the dataset).
+        Requires ``dataset_start`` and ``dataset_end``.
+    dataset_start : str, optional
+        First available date in the dataset (YYYY-MM-DD).
+    dataset_end : str, optional
+        Last available date in the dataset (YYYY-MM-DD).
 
     Returns
     -------
@@ -185,6 +256,26 @@ def build_apx(
         sym_end = output.find(sym_close)
         output = output[:sym_start] + effective_symbol.encode("iso-8859-1") + output[sym_end:]
         logger.info("Symbol set to: %s", effective_symbol or "(all symbols)")
+
+    # --- Set Date Range (backtest window) ------------------------------------
+    if date_range and dataset_start and dataset_end:
+        from_date, to_date = _compute_date_range(date_range, dataset_start, dataset_end)
+        from_val = f"{from_date} 00:00:00"
+        to_val = to_date
+
+        # General section dates
+        output = _replace_xml_tag(output, b"<FromDate>", b"</FromDate>", from_val)
+        output = _replace_xml_tag(output, b"<ToDate>", b"</ToDate>", to_val)
+
+        # BacktestSettings range dates
+        output = _replace_xml_tag(output, b"<RangeFromDate>", b"</RangeFromDate>", from_val)
+        output = _replace_xml_tag(output, b"<RangeToDate>", b"</RangeToDate>", to_val)
+
+        # BacktestSettings backtest-specific range dates
+        output = _replace_xml_tag(output, b"<BacktestRangeFromDate>", b"</BacktestRangeFromDate>", from_val)
+        output = _replace_xml_tag(output, b"<BacktestRangeToDate>", b"</BacktestRangeToDate>", to_val)
+
+        logger.info("Date range set: %s to %s (code=%s)", from_date, to_date, date_range)
 
     # Write output as raw bytes (no text-mode conversion) -------------------
     output_apx_path.write_bytes(output)

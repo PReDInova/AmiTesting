@@ -1,0 +1,43 @@
+// ===========================================
+// Standard Deviation Exit Levels
+// ===========================================
+//
+// Calculates rolling standard deviation of price for use as
+// dynamic stop loss and profit target distances. At each bar,
+// exitDistance gives the point distance that represents the
+// configured number of standard deviations of recent price action.
+//
+// INPUTS (can be defined before including this file):
+//   - sdLookback: Number of bars for StdDev calculation (default: 30)
+//   - sdMultiplier: StdDev multiplier for exit distance (default: 1.0)
+//   - sdSource: (OPTIONAL) Price array to calculate StdDev on (default: Close)
+//
+// OUTPUTS:
+//   - exitStdDev: Raw standard deviation value
+//   - exitDistance: sdMultiplier * exitStdDev (the actual exit distance in points)
+
+// ---- PARAMETERS ----
+// IMPORTANT: All three input variables (sdLookback, sdMultiplier, sdSource)
+// MUST be set by the caller before including this file.
+// Using IsEmpty() on a truly undeclared variable causes Error 29.
+// sdLookback and sdMultiplier can still fall back to Param() defaults
+// because callers always set them (even if to another Param value).
+// sdSource must always be explicitly set by the caller (typically Close).
+
+if( IsEmpty( sdLookback ) )
+{
+    sdLookback = Param( "SD Lookback (bars)", 30, 5, 200, 1 );
+}
+
+if( IsEmpty( sdMultiplier ) )
+{
+    sdMultiplier = Param( "SD Multiplier", 1.0, 0.1, 5.0, 0.1 );
+}
+
+// sdSource is required — caller must set before including.
+// Removed IsEmpty(sdSource) guard: causes Error 29 when sdSource
+// was never assigned. See ERR-007 in afl_errors/known_errors.json.
+
+// ---- CALCULATION ----
+exitStdDev = StDev( sdSource, sdLookback );
+exitDistance = sdMultiplier * exitStdDev;

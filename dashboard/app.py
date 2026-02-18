@@ -713,7 +713,7 @@ def load_afl_version(version_name: str) -> tuple:
         return (False, str(exc))
 
 
-def _run_backtest_background(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None):
+def _run_backtest_background(strategy_id: str = None, version_id: str = None, run_mode: int = None, symbol: str = None, date_range: str = None):
     """Run the backtest in a background thread via run.py.
 
     Uses ``Popen`` instead of ``subprocess.run`` so that the run_id can be
@@ -755,6 +755,8 @@ def _run_backtest_background(strategy_id: str = None, version_id: str = None, ru
             cmd.extend(["--run-mode", str(run_mode)])
         if symbol:
             cmd.extend(["--symbol", symbol])
+        if date_range:
+            cmd.extend(["--date-range", date_range])
 
         proc_log_file = open(proc_log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
@@ -1260,6 +1262,7 @@ def run_with_params(strategy_id: str):
     version_id = request.form.get("version_id")
     run_mode = int(request.form.get("run_mode", "2"))
     symbol = request.form.get("symbol", "").strip() or None
+    date_range = request.form.get("date_range", "").strip() or None
 
     # Get the version's AFL content
     version = db_get_version(version_id)
@@ -1330,7 +1333,7 @@ def run_with_params(strategy_id: str):
     # Run backtest in background
     thread = threading.Thread(
         target=_run_backtest_background,
-        args=(strategy_id, new_version_id, run_mode, symbol),
+        args=(strategy_id, new_version_id, run_mode, symbol, date_range),
         daemon=True,
     )
     thread.start()
@@ -1636,10 +1639,11 @@ def backtest_run():
     strategy_id = request.form.get("strategy_id", "").strip() or None
     version_id = request.form.get("version_id", "").strip() or None
     symbol = request.form.get("symbol", "").strip() or None
+    date_range = request.form.get("date_range", "").strip() or None
 
     thread = threading.Thread(
         target=_run_backtest_background,
-        args=(strategy_id, version_id, None, symbol),
+        args=(strategy_id, version_id, None, symbol, date_range),
         daemon=True,
     )
     thread.start()
@@ -1714,6 +1718,20 @@ def api_symbols():
     except Exception as exc:
         logger.warning("Failed to list symbols: %s", exc)
         return jsonify({"symbols": [], "default": GCZ25_SYMBOL, "stale": True})
+
+
+@app.route("/api/dataset-dates")
+def api_dataset_dates():
+    """Return the first and last available dates for the default symbol."""
+    try:
+        from scripts.ole_stock_data import get_dataset_date_range
+        symbol = request.args.get("symbol", "").strip() or None
+        refresh = request.args.get("refresh") == "1"
+        result = get_dataset_date_range(symbol=symbol, refresh=refresh)
+        return jsonify(result)
+    except Exception as exc:
+        logger.warning("Failed to get dataset dates: %s", exc)
+        return jsonify({"first_date": None, "last_date": None, "error": str(exc), "stale": True})
 
 
 @app.route("/api/run/<run_id>/opt-progress")

@@ -524,6 +524,103 @@ def get_latest_bars(symbol: str, num_bars: int = 500, interval: int = 60,
 
 
 # ======================================================================
+# Dataset date range (cached)
+# ======================================================================
+
+_DATE_RANGE_CACHE_PATH = Path(__file__).resolve().parent.parent / "cache" / "date_range.json"
+_DATE_RANGE_CACHE_TTL = 3600  # 1 hour
+
+
+def get_dataset_date_range(symbol: str = None, refresh: bool = False) -> dict:
+    """Return the first and last available dates for a symbol in AmiBroker.
+
+    Uses a JSON file cache to avoid repeated COM calls.
+
+    Parameters
+    ----------
+    symbol : str, optional
+        Ticker symbol to query.  Falls back to the default symbol from
+        settings if not provided.
+    refresh : bool
+        Force a fresh COM query, ignoring the cache.
+
+    Returns
+    -------
+    dict
+        ``{"first_date": "YYYY-MM-DD", "last_date": "YYYY-MM-DD",
+          "error": None, "stale": False}``
+    """
+    from config.settings import GCZ25_SYMBOL
+    symbol = symbol or GCZ25_SYMBOL
+
+    # Try cache first
+    if not refresh and _DATE_RANGE_CACHE_PATH.exists():
+        try:
+            cache = json.loads(_DATE_RANGE_CACHE_PATH.read_text(encoding="utf-8"))
+            cache_age = (datetime.now() - datetime.fromisoformat(cache["fetched_at"])).total_seconds()
+            if cache_age < _DATE_RANGE_CACHE_TTL and cache.get("symbol") == symbol:
+                return {
+                    "first_date": cache["first_date"],
+                    "last_date": cache["last_date"],
+                    "error": None,
+                    "stale": False,
+                }
+        except Exception:
+            pass
+
+    # Query AmiBroker via COM
+    fetcher = StockDataFetcher()
+    if not fetcher.connect():
+        # Fall back to stale cache
+        if _DATE_RANGE_CACHE_PATH.exists():
+            try:
+                cache = json.loads(_DATE_RANGE_CACHE_PATH.read_text(encoding="utf-8"))
+                return {
+                    "first_date": cache["first_date"],
+                    "last_date": cache["last_date"],
+                    "error": None,
+                    "stale": True,
+                }
+            except Exception:
+                pass
+        return {"first_date": None, "last_date": None, "error": "AmiBroker not running", "stale": True}
+
+    try:
+        fetcher.load_database()
+        stock = fetcher.ab.Stocks(symbol)
+        if stock is None:
+            return {"first_date": None, "last_date": None, "error": f"Symbol '{symbol}' not found", "stale": True}
+
+        quotations = stock.Quotations
+        count = quotations.Count
+        if count == 0:
+            return {"first_date": None, "last_date": None, "error": f"No data for '{symbol}'", "stale": True}
+
+        first_dt = _com_date_to_datetime(quotations(0).Date)
+        last_dt = _com_date_to_datetime(quotations(count - 1).Date)
+
+        first_date = first_dt.strftime("%Y-%m-%d")
+        last_date = last_dt.strftime("%Y-%m-%d")
+
+        # Write cache
+        _DATE_RANGE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _DATE_RANGE_CACHE_PATH.write_text(json.dumps({
+            "symbol": symbol,
+            "first_date": first_date,
+            "last_date": last_date,
+            "fetched_at": datetime.now().isoformat(),
+        }), encoding="utf-8")
+
+        return {"first_date": first_date, "last_date": last_date, "error": None, "stale": False}
+
+    except Exception as exc:
+        logger.error("get_dataset_date_range failed: %s", exc)
+        return {"first_date": None, "last_date": None, "error": str(exc), "stale": True}
+    finally:
+        fetcher.disconnect()
+
+
+# ======================================================================
 # Cached wrapper
 # ======================================================================
 

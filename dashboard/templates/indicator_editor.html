@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}{{ "Edit " + filename if filename else "New Indicator" }} — AmiTesting{% endblock %}
+
+{% block extra_head %}
+<!-- CodeMirror 5 -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/dracula.min.css">
+<style>
+    .CodeMirror {
+        border-radius: 8px;
+        font-size: 0.9rem;
+        border: 1px solid rgba(0,0,0,0.1);
+    }
+    .meta-table th {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: #6c757d;
+        font-weight: 600;
+    }
+    .meta-table td {
+        font-size: 0.85rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ── Breadcrumb ──────────────────────────────────────── -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/" class="text-decoration-none">Home</a></li>
+        <li class="breadcrumb-item"><a href="/indicators" class="text-decoration-none">Indicators</a></li>
+        <li class="breadcrumb-item active">{{ filename if filename else "New Indicator" }}</li>
+    </ol>
+</nav>
+
+<!-- ── Header ──────────────────────────────────────────── -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        {% if meta %}
+        <h2 class="fw-bold mb-1">{{ meta.display_name }}</h2>
+        <p class="text-muted mb-0">
+            <code>{{ filename }}</code>
+            {% if meta.indicator_type == 'include' %}
+            <span class="badge bg-success ms-2">Include</span>
+            {% else %}
+            <span class="badge bg-warning text-dark ms-2">Standalone</span>
+            {% endif %}
+        </p>
+        {% else %}
+        <h2 class="fw-bold mb-1">New Indicator</h2>
+        <p class="text-muted mb-0">Create a new reusable AFL indicator module</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- ── Left: Editor ──────────────────────────────── -->
+    <div class="col-lg-7">
+        <div class="card mb-3">
+            <div class="card-body p-0">
+                {% if filename %}
+                <!-- Edit mode -->
+                <form id="indicator-form" method="POST" action="/indicators/{{ filename }}/save">
+                    <textarea name="afl_content" id="indicator-code" style="display:none;">{{ content }}</textarea>
+                </form>
+                {% else %}
+                <!-- Create mode -->
+                <form id="indicator-form" method="POST" action="/indicators/create">
+                    <div class="p-3 pb-0">
+                        <label for="indicator-filename" class="form-label fw-bold">Filename <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm mb-2" id="indicator-filename"
+                               name="filename" placeholder="e.g. my_indicator.afl" required
+                               style="font-family: 'Cascadia Code', 'Fira Code', monospace;">
+                    </div>
+                    <textarea name="afl_content" id="indicator-code" style="display:none;">{{ content }}</textarea>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- ── Button Row ────────────────────────────── -->
+        <div class="d-flex gap-2 mb-3">
+            <button type="submit" form="indicator-form" class="btn btn-success">
+                <i class="bi bi-save me-1"></i>{{ "Save" if filename else "Create" }}
+            </button>
+            <a href="/indicators" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Library
+            </a>
+            {% if filename %}
+            <form method="POST" action="/indicators/{{ filename }}/delete" class="ms-auto"
+                  onsubmit="return confirm('Delete indicator {{ filename }}? This cannot be undone.')">
+                <button type="submit" class="btn btn-outline-danger">
+                    <i class="bi bi-trash me-1"></i>Delete
+                </button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ── Right: Metadata ───────────────────────────── -->
+    <div class="col-lg-5">
+        {% if meta %}
+        <!-- Description -->
+        {% if meta.description %}
+        <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-info-circle me-1"></i>Description</div>
+            <div class="card-body">
+                <p class="mb-0 small">{{ meta.description }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Parameters -->
+        {% if meta.params %}
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-sliders me-1"></i>Parameters
+                <span class="badge bg-secondary ms-1">{{ meta.params|length }}</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 meta-table">
+                        <thead>
+                            <tr>
+                                <th>Variable</th>
+                                <th>Label</th>
+                                <th>Default</th>
+                                <th>Range</th>
+                                <th>Guard</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in meta.params %}
+                            <tr>
+                                <td><code>{{ p.var_name }}</code></td>
+                                <td>{{ p.display_name }}</td>
+                                <td>
+                                    {% if p.param_type == 'ParamToggle' %}
+                                    {{ p.toggle_options.split('|')[p.default|int] if p.default|int < p.toggle_options.split('|')|length else p.default }}
+                                    {% else %}
+                                    {{ p.default }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if p.param_type == 'ParamToggle' %}
+                                    <span class="text-muted">{{ p.toggle_options }}</span>
+                                    {% elif p.min_val and p.max_val %}
+                                    {{ p.min_val }}–{{ p.max_val }}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if p.has_guard %}
+                                    <span class="badge bg-success-subtle text-success">Yes</span>
+                                    {% else %}
+                                    <span class="badge bg-warning-subtle text-warning">No</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Required Inputs -->
+        {% if meta.required_inputs %}
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-box-arrow-in-right me-1"></i>Required Inputs
+                <span class="badge bg-secondary ms-1">{{ meta.required_inputs|length }}</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 meta-table">
+                        <thead>
+                            <tr>
+                                <th>Variable</th>
+                                <th>Description</th>
+                                <th>Required</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for inp in meta.required_inputs %}
+                            <tr>
+                                <td><code>{{ inp.var_name }}</code></td>
+                                <td>{{ inp.description }}</td>
+                                <td>
+                                    {% if inp.optional %}
+                                    <span class="badge bg-secondary">Optional</span>
+                                    {% else %}
+                                    <span class="badge bg-primary">Required</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Outputs -->
+        {% if meta.output_vars %}
+        <div class="card mb-3">
+            <div class="card-header">
+                <i class="bi bi-box-arrow-right me-1"></i>Output Variables
+                <span class="badge bg-secondary ms-1">{{ meta.output_vars|length }}</span>
+            </div>
+            <div class="card-body">
+                <div class="d-flex flex-wrap gap-2">
+                    {% for v in meta.output_vars %}
+                    <code class="px-2 py-1 rounded" style="background: #f0f0f0;">{{ v }}</code>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <!-- No metadata yet (create mode) -->
+        <div class="card">
+            <div class="card-body text-center py-4">
+                <i class="bi bi-info-circle text-muted" style="font-size: 2rem;"></i>
+                <p class="text-muted mt-2 mb-0 small">
+                    Save the indicator to see parsed metadata.<br>
+                    Use <code>// INPUTS:</code> and <code>// OUTPUTS:</code> comment headers,<br>
+                    and <code>typeof()</code> or <code>IsEmpty()</code> guards on <code>Param()</code> calls.
+                </p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- CodeMirror core + addons -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/selection/active-line.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var editor = CodeMirror.fromTextArea(document.getElementById('indicator-code'), {
+        mode: 'text/x-csrc',
+        theme: 'dracula',
+        lineNumbers: true,
+        matchBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        lineWrapping: true
+    });
+    editor.setSize(null, 550);
+
+    // Sync editor content back to hidden textarea before form submission
+    document.getElementById('indicator-form').addEventListener('submit', function() {
+        editor.save();
+    });
+
+    // Keyboard shortcut: Ctrl+S / Cmd+S to save
+    editor.setOption('extraKeys', {
+        'Ctrl-S': function() {
+            editor.save();
+            document.getElementById('indicator-form').submit();
+        },
+        'Cmd-S': function() {
+            editor.save();
+            document.getElementById('indicator-form').submit();
+        }
+    });
+});
+</script>
+{% endblock %}

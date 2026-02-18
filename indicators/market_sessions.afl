@@ -1,0 +1,103 @@
+// ===========================================
+// Market Session Time Filter
+// ===========================================
+// This file provides market session timing logic that can be imported
+// into any strategy or indicator that needs session-based filtering.
+//
+// Usage:
+//   #include_once "Formulas\\Custom\\market_sessions.afl"
+//   Then use the 'tradingHours' variable in your strategy
+//
+// ===========================================
+
+// ---- MARKET SESSION PARAMETERS ----
+// Select trading session: 0=Custom, 1=Asian, 2=London, 3=New York
+marketSession = Param( "Market Session", 3, 0, 3, 1 );
+// Custom session times (used when marketSession = 0)
+customStartTime = Param( "Custom start time (HHMMSS)", 93000, 0, 235959, 1 );
+customEndTime   = Param( "Custom end time (HHMMSS)",   140000, 0, 235959, 1 );
+// Option to avoid first and last hour
+avoidFirstHour = ParamToggle( "Avoid first hour", "No|Yes", 0 );
+avoidLastHour  = ParamToggle( "Avoid last hour",  "No|Yes", 0 );
+
+// ---- CALCULATE SESSION TIMES ----
+tn = TimeNum();
+
+// Define session times based on marketSession parameter
+// Times are in HHMMSS format (EST/EDT timezone)
+sessionStart = 0;
+sessionEnd = 0;
+
+if( marketSession == 0 )  // Custom
+{
+    sessionStart = customStartTime;
+    sessionEnd = customEndTime;
+}
+else if( marketSession == 1 )  // Asian session (6:00 PM - 3:00 AM EST)
+{
+    sessionStart = 180000;  // 6:00 PM
+    sessionEnd = 030000;    // 3:00 AM (next day)
+}
+else if( marketSession == 2 )  // London session (3:00 AM - 12:00 PM EST)
+{
+    sessionStart = 030000;  // 3:00 AM
+    sessionEnd = 120000;    // 12:00 PM
+}
+else if( marketSession == 3 )  // New York session (9:30 AM - 4:00 PM EST)
+{
+    sessionStart = 93000;   // 9:30 AM
+    sessionEnd = 160000;    // 4:00 PM
+}
+
+// Apply first/last hour filters
+if( avoidFirstHour )
+{
+    // Add 1 hour (10000 in HHMMSS format) to session start
+    startHour = int(sessionStart / 10000);
+    startMin = int((sessionStart % 10000) / 100);
+    startSec = sessionStart % 100;
+
+    startHour = startHour + 1;
+    if( startHour >= 24 ) startHour = startHour - 24;  // Handle day rollover
+
+    sessionStart = startHour * 10000 + startMin * 100 + startSec;
+}
+
+if( avoidLastHour )
+{
+    // Subtract 1 hour (10000 in HHMMSS format) from session end
+    endHour = int(sessionEnd / 10000);
+    endMin = int((sessionEnd % 10000) / 100);
+    endSec = sessionEnd % 100;
+
+    endHour = endHour - 1;
+    if( endHour < 0 ) endHour = endHour + 24;  // Handle day rollover
+
+    sessionEnd = endHour * 10000 + endMin * 100 + endSec;
+}
+
+// Handle overnight sessions (e.g., Asian session 18:00 - 03:00)
+if( sessionEnd < sessionStart )
+{
+    // Session crosses midnight
+    tradingHours = (tn >= sessionStart) OR (tn <= sessionEnd);
+}
+else
+{
+    // Normal session (same day)
+    tradingHours = tn >= sessionStart AND tn <= sessionEnd;
+}
+
+// Helper function to get session name (for titles/labels)
+function GetSessionName()
+{
+    sessionName = "";
+    if( marketSession == 0 ) sessionName = "Custom";
+    else if( marketSession == 1 ) sessionName = "Asian";
+    else if( marketSession == 2 ) sessionName = "London";
+    else if( marketSession == 3 ) sessionName = "New York";
+    return sessionName;
+}
+
+// Export the session name as a variable
+sessionName = GetSessionName();

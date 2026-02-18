@@ -1,0 +1,41 @@
+// ADX (Average Directional Index) Indicator
+// Measures trend strength regardless of direction
+
+// Parameters
+period = Param("ADX Period", 14, 5, 50, 1);
+showDI = ParamToggle("Show +DI/-DI", "No|Yes", 1);
+trendLevel = Param("Trend Threshold", 25, 15, 40, 1);
+
+// Calculate True Range
+TR = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
+
+// Calculate Directional Movement
+plusDM = IIf(High - Ref(High, -1) > Ref(Low, -1) - Low AND High - Ref(High, -1) > 0,
+             High - Ref(High, -1), 0);
+minusDM = IIf(Ref(Low, -1) - Low > High - Ref(High, -1) AND Ref(Low, -1) - Low > 0,
+              Ref(Low, -1) - Low, 0);
+
+// Smooth the values using Wilder's smoothing (EMA with period adjustment)
+ATR14 = Wilders(TR, period);
+plusDI = 100 * Wilders(plusDM, period) / ATR14;
+minusDI = 100 * Wilders(minusDM, period) / ATR14;
+
+// Calculate DX and ADX
+DX = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
+ADXvalue = Wilders(DX, period);
+
+// Plotting
+Plot(ADXvalue, "ADX", colorGold, styleLine | styleThick);
+
+if (showDI)
+{
+    Plot(plusDI, "+DI", colorGreen, styleLine);
+    Plot(minusDI, "-DI", colorRed, styleLine);
+}
+
+// Trend strength threshold line
+Plot(trendLevel, "Trend Level", colorGrey50, styleDashed);
+
+// Title
+Title = StrFormat("ADX (%g): %.2f  |  +DI: %.2f  |  -DI: %.2f",
+                  period, ADXvalue, plusDI, minusDI);

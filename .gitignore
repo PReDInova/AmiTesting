@@ -54,6 +54,42 @@ strategies/manifest.json
 
 # AmiBroker generated files
 *.apx.bak
+PersistVars.bin
+broker.alerts
+broker.layers
+broker.log
+broker.newcharts
+broker.newcharts.bak
+broker.params
+broker.prefs
+broker.schedule
+esignal.log
+nul
+
+# Generated per-run APX/AFL snapshots (auto-created by apx_builder)
+apx/run_*.apx
+apx/strategy_*.afl
+apx/strategy_*.afl.bak
+apx/debug_*.afl
+apx/testing.afl
+apx/test_*.apx
+apx/test_*.afl
+apx/gcz25_test.afl
+
+# AFL backups
+afl/*.afl.bak
+
+# AFL error logs
+afl_errors/
+
+# Backups directory
+backups/
+
+# XAML files
+xaml/
+
+# Results tracking
+results/.current_run_id
 
 # OHLCV chart cache (auto-generated)
 cache/*.json

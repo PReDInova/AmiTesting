@@ -1,0 +1,112 @@
+// ===========================================
+// D01 - Derivative Basic Reversal
+// ===========================================
+//
+// Simple reversal strategy using the derivative lookback indicator.
+// Buys when the smoothed price (TEMA) forms a trough (derivative
+// crosses zero upward) and shorts when it forms a peak (derivative
+// crosses zero downward).
+//
+// Entry:
+//   Buy  = validTrough (TEMA bottoming, confirmed by 2nd derivative)
+//   Short = validPeak  (TEMA topping, confirmed by 2nd derivative)
+//
+// Exit: StdDev-based stop loss and profit target
+//
+// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+
+// ---- Strategy Parameters ----
+temaLength   = Optimize("TEMA Length", 21, 3, 30, 1);
+lookback     = Optimize("Deriv Lookback", 8, 2, 21, 1);
+minSeparation = Param("Min Separation", 10, 3, 30, 1);
+sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult       = Param("SD Multiplier", 1, 0.1, 5.0, 0.1);
+profitMult   = Param("Profit Target Mult", 1, 0.5, 3.0, 0.1);
+
+// ---- Aggregate ticks into 1-minute bars ----
+TimeFrameSet(in1Minute);
+
+// ---- Session reset for Asian session ----
+sessionResetTime = 180000;
+
+// ---- TEMA Indicator ----
+smoothingLength = temaLength;
+sourcePrice = Close;
+#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/tema.afl"
+
+// ---- Derivative Lookback Indicator ----
+#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/derivative_lookback.afl"
+
+// ---- StdDev Exit Indicator ----
+sdLookback   = sdBars;
+sdMultiplier = sdMult;
+sdSource     = Close;
+#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/stdev_exit.afl"
+
+// ---- Entry Signals ----
+buySignal   = validTrough;
+shortSignal = validPeak;
+
+// ---- Save computed arrays before restoring timeframe ----
+tema1m        = temas;
+firstDeriv1m  = firstDeriv;
+secondDeriv1m = secondDeriv;
+validPeak1m   = validPeak;
+validTrough1m = validTrough;
+peakLevel1m   = peakLevel;
+troughLevel1m = troughLevel;
+exitDist1m    = exitDistance;
+
+TimeFrameRestore();
+
+// ---- Expand to base (tick) timeframe ----
+tema1m        = TimeFrameExpand(tema1m, in1Minute);
+firstDeriv1m  = TimeFrameExpand(firstDeriv1m, in1Minute);
+secondDeriv1m = TimeFrameExpand(secondDeriv1m, in1Minute);
+validPeak1m   = TimeFrameExpand(validPeak1m, in1Minute);
+validTrough1m = TimeFrameExpand(validTrough1m, in1Minute);
+peakLevel1m   = TimeFrameExpand(peakLevel1m, in1Minute);
+troughLevel1m = TimeFrameExpand(troughLevel1m, in1Minute);
+exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
+buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
+shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
+
+// ---- Entry signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
+
+// Plot peak/trough horizontal levels
+Plot(peakLevel1m, "Peak Level", colorRed, styleDashed | styleNoRescale);
+Plot(troughLevel1m, "Trough Level", colorGreen, styleDashed | styleNoRescale);
+
+// Mark turning points
+PlotShapes(validPeak1m * shapeSmallDownTriangle, colorOrange, 0, High, -20);
+PlotShapes(validTrough1m * shapeSmallUpTriangle, colorLime, 0, Low, -20);
+
+// Mark entry signals
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | D01 Derivative Basic" +
+        " | TEMA(" + NumToStr(temaLength, 1.0) + ")" +
+        " | Deriv(" + NumToStr(lookback, 1.0) + "/" + NumToStr(minSeparation, 1.0) + ")" +
+        " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
+        " ProfM=" + NumToStr(profitMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

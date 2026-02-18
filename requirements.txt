@@ -1,3 +1,9 @@
 pywin32>=306
 pandas>=2.2.0
 flask>=3.0.0
+python-dateutil>=2.9.0
+project-x-py>=3.5.9
+python-dotenv>=1.0.0
+httpx[http2]>=0.28.0
+polars>=1.20.0,<1.31.0
+tzdata>=2024.1

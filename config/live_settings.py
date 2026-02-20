@@ -30,7 +30,6 @@ AMIBROKER_DB = AMIBROKER_DB_PATH
 # ---------------------------------------------------------------------------
 # Signal scanning
 # ---------------------------------------------------------------------------
-SCAN_INTERVAL_SECONDS = 60            # Run exploration scan every N seconds
 SCAN_LOOKBACK_BARS = 5                # Check last N bars for new signals
 SCAN_STRATEGY_AFL_PATH = str(AFL_DIR / "ma_crossover.afl")
 
@@ -41,6 +40,14 @@ ALERT_CHANNELS = ["log", "desktop", "sound"]
 ALERT_SOUND_FILE = None               # Path to .wav, or None for default beep
 ALERT_WEBHOOK_URL = None              # Optional webhook endpoint
 ALERT_DEDUP_WINDOW_SECONDS = 300      # Suppress duplicate signals within window
+
+# ---------------------------------------------------------------------------
+# Trade execution
+# ---------------------------------------------------------------------------
+TRADE_ENABLED = False                 # Must be explicitly enabled
+TRADE_SIZE = 1                        # Contracts per trade
+TRADE_TIMEOUT_SECONDS = 30            # Cancel unfilled orders after N seconds
+TRADE_FILL_POLL_INTERVAL = 0.5        # Seconds between fill status checks
 
 # ---------------------------------------------------------------------------
 # Robustness

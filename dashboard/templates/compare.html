@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{% block title %}Strategy Comparison{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <h2>Strategy Comparison</h2>
+    <p class="text-muted">Compare metrics across multiple backtest runs side by side.</p>
+
+    <!-- Strategy/Run Selection -->
+    <div class="row mb-3">
+        <div class="col-md-8">
+            <label class="form-label">Select Backtest Runs to Compare</label>
+            <div id="run-selector">
+                {% for s in strategies %}
+                <div class="mb-2">
+                    <strong>{{ s.name }}</strong>
+                    <span class="badge bg-secondary ms-1">{{ s.get('status', 'draft') }}</span>
+                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="loadRuns('{{ s.id }}', this)">
+                        Show Runs
+                    </button>
+                    <div class="runs-list mt-1" id="runs-{{ s.id }}" style="display:none;"></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Selected Runs</label>
+            <div id="selected-runs" class="border rounded p-2" style="min-height: 100px;">
+                <p class="text-muted small mb-0">Click runs to add them for comparison</p>
+            </div>
+            <button class="btn btn-primary mt-2" onclick="compareSelected()" id="compare-btn" disabled>
+                Compare Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Comparison Results -->
+    <div id="comparison-results" style="display:none;">
+        <h4>Comparison Results</h4>
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered" id="comparison-table">
+                <thead class="table-dark">
+                    <tr id="comparison-header"></tr>
+                </thead>
+                <tbody id="comparison-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+const selectedRunIds = new Set();
+
+function loadRuns(strategyId, btn) {
+    const container = document.getElementById('runs-' + strategyId);
+    if (container.style.display !== 'none') {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+    container.innerHTML = '<span class="text-muted small">Loading...</span>';
+
+    fetch(`/api/strategy/${strategyId}/runs`)
+        .then(r => r.json())
+        .then(runs => {
+            if (!runs.length) {
+                container.innerHTML = '<span class="text-muted small">No runs found</span>';
+                return;
+            }
+            let html = '';
+            runs.forEach(run => {
+                const metrics = run.metrics || {};
+                const profit = metrics.net_profit || metrics['Net Profit'] || 'N/A';
+                const trades = metrics.num_trades || metrics['# Trades'] || 'N/A';
+                const isSelected = selectedRunIds.has(run.id);
+                html += `<div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="run-${run.id}"
+                           ${isSelected ? 'checked' : ''}
+                           onchange="toggleRun('${run.id}', '${run.created_at ? run.created_at.substring(0, 16) : ''}', '${run.symbol || ''}')">
+                    <label class="form-check-label small" for="run-${run.id}">
+                        ${run.created_at ? run.created_at.substring(0, 16) : 'Unknown'}
+                        | ${run.symbol || 'All'} | ${run.status}
+                        | P&L: ${typeof profit === 'number' ? '$' + profit.toFixed(2) : profit}
+                        | Trades: ${trades}
+                    </label>
+                </div>`;
+            });
+            container.innerHTML = html;
+        })
+        .catch(err => {
+            container.innerHTML = `<span class="text-danger small">Error: ${err}</span>`;
+        });
+}
+
+function toggleRun(runId, label, symbol) {
+    if (selectedRunIds.has(runId)) {
+        selectedRunIds.delete(runId);
+    } else {
+        selectedRunIds.add(runId);
+    }
+    updateSelectedDisplay();
+}
+
+function updateSelectedDisplay() {
+    const container = document.getElementById('selected-runs');
+    const btn = document.getElementById('compare-btn');
+    if (selectedRunIds.size === 0) {
+        container.innerHTML = '<p class="text-muted small mb-0">Click runs to add them for comparison</p>';
+        btn.disabled = true;
+        return;
+    }
+    btn.disabled = selectedRunIds.size < 2;
+    let html = '';
+    selectedRunIds.forEach(id => {
+        html += `<span class="badge bg-primary me-1 mb-1">${id.substring(0, 8)}
+            <button type="button" class="btn-close btn-close-white ms-1" style="font-size: 0.5em;"
+                    onclick="toggleRun('${id}'); document.getElementById('run-${id}').checked=false;"></button>
+        </span>`;
+    });
+    container.innerHTML = html;
+}
+
+function compareSelected() {
+    const params = Array.from(selectedRunIds).map(id => 'run_ids=' + id).join('&');
+    fetch('/api/compare?' + params)
+        .then(r => r.json())
+        .then(runs => {
+            if (runs.error) {
+                alert(runs.error);
+                return;
+            }
+            renderComparison(runs);
+        });
+}
+
+function renderComparison(runs) {
+    const container = document.getElementById('comparison-results');
+    container.style.display = 'block';
+
+    // Collect all unique metric keys
+    const allKeys = new Set();
+    runs.forEach(run => {
+        Object.keys(run.metrics || {}).forEach(k => allKeys.add(k));
+    });
+
+    // Build header
+    let headerHtml = '<th>Metric</th>';
+    runs.forEach(run => {
+        headerHtml += `<th>${run.run_id.substring(0, 8)}<br><small>${run.symbol || 'All'} | ${run.date_range || ''}</small></th>`;
+    });
+    document.getElementById('comparison-header').innerHTML = headerHtml;
+
+    // Build body
+    let bodyHtml = '';
+    const sortedKeys = Array.from(allKeys).sort();
+    sortedKeys.forEach(key => {
+        bodyHtml += `<tr><td class="fw-bold">${key}</td>`;
+        // Find best value for highlighting
+        const values = runs.map(r => {
+            const v = (r.metrics || {})[key];
+            return typeof v === 'number' ? v : null;
+        });
+
+        runs.forEach((run, idx) => {
+            const val = (run.metrics || {})[key];
+            let display = val;
+            if (typeof val === 'number') {
+                display = val.toFixed(2);
+            } else if (val === undefined || val === null) {
+                display = '-';
+            }
+
+            // Highlight best value in green
+            let cls = '';
+            if (values[idx] !== null && values.filter(v => v !== null).length > 1) {
+                const isProfit = key.toLowerCase().includes('profit') || key.toLowerCase().includes('win');
+                const isLoss = key.toLowerCase().includes('drawdown') || key.toLowerCase().includes('loss');
+                const maxVal = Math.max(...values.filter(v => v !== null));
+                const minVal = Math.min(...values.filter(v => v !== null));
+                if (isProfit && values[idx] === maxVal) cls = 'table-success';
+                if (isLoss && values[idx] === minVal) cls = 'table-success';
+            }
+
+            bodyHtml += `<td class="${cls}">${display}</td>`;
+        });
+        bodyHtml += '</tr>';
+    });
+    document.getElementById('comparison-body').innerHTML = bodyHtml;
+}
+</script>
+{% endblock %}

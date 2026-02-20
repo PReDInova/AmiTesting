@@ -1,0 +1,13 @@
+<script>
+    window.EXPLORER_CONFIG = {
+        strategyId: {{ strategy.id | tojson }},
+        symbol: {{ symbol | tojson }},
+        defaultSymbol: {{ default_symbol | tojson }},
+        indicatorConfigs: {{ indicator_configs | tojson }},
+        paramDefs: {{ params | tojson }},
+        codeMap: {{ code_map | tojson }},
+        rawDescription: {{ (strategy.description or "") | tojson }},
+        rawAflContent: {{ (afl_content or "") | tojson }}
+    };
+</script>
+<script src="{{ url_for('static', filename='js/indicator_explorer.js') }}"></script>

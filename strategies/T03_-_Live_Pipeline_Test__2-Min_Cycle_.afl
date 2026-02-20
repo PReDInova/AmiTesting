@@ -1,0 +1,45 @@
+// ===========================================
+// T03 - Live Pipeline Test (2-Min Cycle)
+// ===========================================
+//
+// Mechanical strategy for testing the live signal alert pipeline.
+// On 1-minute bars: buys every 4 bars, holds for 2 bars, exits,
+// waits 2 bars, then repeats.  ~2-minute hold, ~2-minute flat.
+//
+// No indicators, no filters. If this strategy produces zero trades
+// the problem is in the pipeline, not the strategy logic.
+//
+// Recommended live settings:
+//   Bar Interval:  1 min
+//   Scan Interval: 15-30 sec (so alerts fire promptly)
+
+// ---- 4-bar cycle: buy at 0, sell at 2, repeat ----
+barMod = BarIndex() % 4;
+
+Buy  = barMod == 0;
+Sell = barMod == 2;
+
+// No short trades -- keep it simple
+Short = 0;
+Cover = 0;
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove excess signals ----
+Buy  = ExRem(Buy, Sell);
+Sell = ExRem(Sell, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+PlotShapes(Buy  * shapeUpArrow,   colorGreen, 0, Low,  -12);
+PlotShapes(Sell * shapeDownArrow, colorRed,   0, High, -12);
+
+// Shade the "in position" bars for quick visual confirmation
+inPosition = Flip(Buy, Sell);
+Plot(inPosition * 1, "In Position", colorGreen, styleArea | styleOwnScale | styleNoLabel, 0, 1);
+
+Title = Name() + " | T03 Live Pipeline Test" +
+        " | Bar=" + NumToStr(BarIndex(), 1.0) +
+        " | Mod4=" + NumToStr(barMod, 1.0) +
+        " | " + WriteIf(inPosition, "IN POSITION", "FLAT");

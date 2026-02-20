@@ -1,10 +1,13 @@
 """
 SQLite database for strategy metadata with GUID-based result storage.
 
-Schema: Strategy > Versions > Runs
+Schema: Strategy > Versions > Runs > Live Sessions/Trades/Signals
 - **strategies**: Top-level strategy container (UUID primary key)
 - **strategy_versions**: Versioned AFL code snapshots (UUID primary key)
 - **backtest_runs**: Individual backtest executions (UUID primary key, results in results/<run_id>/)
+- **live_sessions**: Live trading session metadata
+- **live_trades**: Every trade placed during live sessions
+- **live_signals**: Every signal detected during live sessions
 
 Each backtest run is stored separately with its own UUID so multiple
 strategies and versions can be worked on simultaneously.
@@ -13,6 +16,7 @@ strategies and versions can be worked on simultaneously.
 import json
 import sqlite3
 import logging
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,16 +26,50 @@ logger = logging.getLogger(__name__)
 # Default DB lives alongside the project data
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "strategies.db"
 
+# Thread-local connection pool for SQLite
+_thread_local = threading.local()
+
 
 def _get_connection(db_path: Path = None) -> sqlite3.Connection:
-    """Open (or create) the SQLite database and return a connection."""
-    path = db_path or _DEFAULT_DB_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    """Get or create a thread-local SQLite connection.
+
+    Connections are reused within the same thread to avoid the overhead
+    of opening/closing on every call.  Each thread gets its own connection
+    (required by SQLite's threading model).
+    """
+    path = str(db_path or _DEFAULT_DB_PATH)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Check for existing thread-local connection to this path
+    cache_key = f"conn_{path}"
+    conn = getattr(_thread_local, cache_key, None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")  # Verify connection is alive
+            return conn
+        except sqlite3.ProgrammingError:
+            # Connection was closed; create a new one
+            pass
+
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    setattr(_thread_local, cache_key, conn)
     return conn
+
+
+def close_thread_connection(db_path: Path = None) -> None:
+    """Explicitly close the current thread's connection (for cleanup)."""
+    path = str(db_path or _DEFAULT_DB_PATH)
+    cache_key = f"conn_{path}"
+    conn = getattr(_thread_local, cache_key, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        setattr(_thread_local, cache_key, None)
 
 
 def _new_uuid() -> str:
@@ -121,6 +159,75 @@ def init_db(db_path: Path = None) -> None:
                 key_params  TEXT NOT NULL DEFAULT '',
                 updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Live trading session metadata
+            CREATE TABLE IF NOT EXISTS live_sessions (
+                id              TEXT PRIMARY KEY,
+                strategy_id     TEXT REFERENCES strategies(id),
+                version_id      TEXT REFERENCES strategy_versions(id),
+                account_id      TEXT NOT NULL DEFAULT '',
+                account_name    TEXT NOT NULL DEFAULT '',
+                symbol          TEXT NOT NULL DEFAULT '',
+                ami_symbol      TEXT NOT NULL DEFAULT '',
+                bar_interval    INTEGER NOT NULL DEFAULT 1,
+                config_json     TEXT NOT NULL DEFAULT '{}',
+                status          TEXT NOT NULL DEFAULT 'running',
+                bars_injected   INTEGER NOT NULL DEFAULT 0,
+                scans_run       INTEGER NOT NULL DEFAULT 0,
+                alerts_fired    INTEGER NOT NULL DEFAULT 0,
+                trades_placed   INTEGER NOT NULL DEFAULT 0,
+                trades_filled   INTEGER NOT NULL DEFAULT 0,
+                realized_pnl    REAL NOT NULL DEFAULT 0.0,
+                started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                stopped_at      TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Every trade placed during live sessions
+            CREATE TABLE IF NOT EXISTS live_trades (
+                id              TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+                strategy_id     TEXT REFERENCES strategies(id),
+                version_id      TEXT REFERENCES strategy_versions(id),
+                signal_type     TEXT NOT NULL DEFAULT '',
+                symbol          TEXT NOT NULL DEFAULT '',
+                size            INTEGER NOT NULL DEFAULT 1,
+                signal_price    REAL,
+                fill_price      REAL,
+                order_id        TEXT NOT NULL DEFAULT '',
+                status          TEXT NOT NULL DEFAULT 'pending',
+                pnl             REAL,
+                elapsed_seconds REAL,
+                error_message   TEXT NOT NULL DEFAULT '',
+                indicators_json TEXT NOT NULL DEFAULT '{}',
+                strategy_name   TEXT NOT NULL DEFAULT '',
+                signal_at       TIMESTAMP,
+                executed_at     TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_live_trades_session ON live_trades(session_id);
+            CREATE INDEX IF NOT EXISTS idx_live_trades_strategy ON live_trades(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_live_trades_symbol ON live_trades(symbol);
+
+            -- Every signal detected during live sessions (even if not traded)
+            CREATE TABLE IF NOT EXISTS live_signals (
+                id              TEXT PRIMARY KEY,
+                session_id      TEXT NOT NULL REFERENCES live_sessions(id) ON DELETE CASCADE,
+                strategy_id     TEXT REFERENCES strategies(id),
+                signal_type     TEXT NOT NULL DEFAULT '',
+                symbol          TEXT NOT NULL DEFAULT '',
+                close_price     REAL,
+                was_traded      INTEGER NOT NULL DEFAULT 0,
+                was_deduped     INTEGER NOT NULL DEFAULT 0,
+                indicators_json TEXT NOT NULL DEFAULT '{}',
+                conditions_json TEXT NOT NULL DEFAULT '{}',
+                strategy_name   TEXT NOT NULL DEFAULT '',
+                signal_at       TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_live_signals_session ON live_signals(session_id);
+            CREATE INDEX IF NOT EXISTS idx_live_signals_strategy ON live_signals(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_live_signals_type ON live_signals(signal_type);
         """)
         conn.commit()
 
@@ -164,6 +271,13 @@ def init_db(db_path: Path = None) -> None:
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+        # Add lifecycle status column to strategies (migration)
+        try:
+            conn.execute("ALTER TABLE strategies ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # Create optimization_combos table
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS optimization_combos (
@@ -180,11 +294,34 @@ def init_db(db_path: Path = None) -> None:
         """)
         conn.commit()
 
+        # Create walk_forward_runs table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS walk_forward_runs (
+                id              TEXT PRIMARY KEY,
+                strategy_id     TEXT NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+                version_id      TEXT NOT NULL REFERENCES strategy_versions(id) ON DELETE CASCADE,
+                symbol          TEXT NOT NULL DEFAULT '',
+                total_period    TEXT NOT NULL DEFAULT '2y',
+                in_sample_pct   REAL NOT NULL DEFAULT 0.7,
+                num_windows     INTEGER NOT NULL DEFAULT 5,
+                anchored        INTEGER NOT NULL DEFAULT 0,
+                windows_json    TEXT NOT NULL DEFAULT '[]',
+                status          TEXT NOT NULL DEFAULT 'pending',
+                results_json    TEXT NOT NULL DEFAULT '{}',
+                started_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at    TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_wf_runs_strategy ON walk_forward_runs(strategy_id);
+            CREATE INDEX IF NOT EXISTS idx_wf_runs_version ON walk_forward_runs(version_id);
+        """)
+        conn.commit()
+
         # Migrate legacy data if the old single-table schema exists
         _migrate_legacy_if_needed(conn)
 
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def _migrate_legacy_if_needed(conn: sqlite3.Connection) -> None:
@@ -374,7 +511,7 @@ def create_strategy(
         conn.commit()
         return strategy_id
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def update_strategy(
@@ -384,6 +521,7 @@ def update_strategy(
     description: str = None,
     symbol: str = None,
     risk_notes: str = None,
+    status: str = None,
     db_path: Path = None,
 ) -> bool:
     """Update a strategy's metadata. Only non-None fields are updated."""
@@ -393,7 +531,7 @@ def update_strategy(
         values = []
         for col, val in [("name", name), ("summary", summary),
                          ("description", description), ("symbol", symbol),
-                         ("risk_notes", risk_notes)]:
+                         ("risk_notes", risk_notes), ("status", status)]:
             if val is not None:
                 fields.append(f"{col} = ?")
                 values.append(val)
@@ -408,7 +546,7 @@ def update_strategy(
         conn.commit()
         return cursor.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_strategy(strategy_id: str, db_path: Path = None) -> dict | None:
@@ -420,7 +558,7 @@ def get_strategy(strategy_id: str, db_path: Path = None) -> dict | None:
         ).fetchone()
         return dict(row) if row else None
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def list_strategies(db_path: Path = None) -> list[dict]:
@@ -432,7 +570,7 @@ def list_strategies(db_path: Path = None) -> list[dict]:
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def find_strategy_by_name(name: str, db_path: Path = None) -> dict | None:
@@ -444,7 +582,7 @@ def find_strategy_by_name(name: str, db_path: Path = None) -> dict | None:
         ).fetchone()
         return dict(row) if row else None
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def delete_strategy(strategy_id: str, db_path: Path = None) -> bool:
@@ -457,7 +595,7 @@ def delete_strategy(strategy_id: str, db_path: Path = None) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +637,7 @@ def create_version(
         conn.commit()
         return version_id
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_version(version_id: str, db_path: Path = None) -> dict | None:
@@ -515,7 +653,7 @@ def get_version(version_id: str, db_path: Path = None) -> dict | None:
         d["parameters"] = json.loads(d.pop("parameters_json", "[]"))
         return d
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def list_versions(strategy_id: str, db_path: Path = None) -> list[dict]:
@@ -533,7 +671,7 @@ def list_versions(strategy_id: str, db_path: Path = None) -> list[dict]:
             result.append(d)
         return result
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_latest_version(strategy_id: str, db_path: Path = None) -> dict | None:
@@ -550,7 +688,7 @@ def get_latest_version(strategy_id: str, db_path: Path = None) -> dict | None:
         d["parameters"] = json.loads(d.pop("parameters_json", "[]"))
         return d
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +725,7 @@ def create_run(
         conn.commit()
         return run_id
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def update_run(
@@ -627,7 +765,7 @@ def update_run(
         conn.commit()
         return cursor.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_run(run_id: str, db_path: Path = None) -> dict | None:
@@ -645,7 +783,7 @@ def get_run(run_id: str, db_path: Path = None) -> dict | None:
         d["columns"] = json.loads(d.pop("columns_json", "[]") or "[]")
         return d
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def list_runs(
@@ -678,7 +816,7 @@ def list_runs(
             result.append(d)
         return result
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_latest_run(strategy_id: str, db_path: Path = None) -> dict | None:
@@ -695,7 +833,7 @@ def get_latest_run(strategy_id: str, db_path: Path = None) -> dict | None:
         d["metrics"] = json.loads(d.pop("metrics_json", "{}"))
         return d
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def delete_run(run_id: str, db_path: Path = None) -> bool:
@@ -708,7 +846,7 @@ def delete_run(run_id: str, db_path: Path = None) -> bool:
         conn.commit()
         return cursor.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 # ---------------------------------------------------------------------------
@@ -806,7 +944,7 @@ def store_optimization_combos(
         logger.info("Stored %d optimization combos for run %s", len(rows), run_id)
         return len(rows)
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def _safe_json_value(val):
@@ -863,7 +1001,7 @@ def get_optimization_combos(
             result.append(d)
         return result
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def reconstruct_optimization_parsed(run_id: str, db_path: Path = None) -> dict | None:
@@ -1195,7 +1333,7 @@ def create_batch(name: str = "", strategy_ids: list = None, run_mode: int = 2, d
         conn.commit()
         return batch_id
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def update_batch(batch_id: str, status: str = None, completed_count: int = None, failed_count: int = None, run_ids: list = None, results_json: str = None, started_at: str = None, completed_at: str = None, db_path: Path = None) -> bool:
@@ -1224,7 +1362,7 @@ def update_batch(batch_id: str, status: str = None, completed_count: int = None,
         conn.commit()
         return cursor.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_batch(batch_id: str, db_path: Path = None) -> dict | None:
@@ -1240,7 +1378,7 @@ def get_batch(batch_id: str, db_path: Path = None) -> dict | None:
         d["results"] = json.loads(d.pop("results_json", "{}"))
         return d
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def list_batches(limit: int = 20, db_path: Path = None) -> list[dict]:
@@ -1259,7 +1397,7 @@ def list_batches(limit: int = 20, db_path: Path = None) -> list[dict]:
             result.append(d)
         return result
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 # ---------------------------------------------------------------------------
@@ -1275,7 +1413,7 @@ def list_param_tooltips(db_path: Path = None) -> list[dict]:
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_param_tooltip(name: str, db_path: Path = None) -> dict | None:
@@ -1287,7 +1425,7 @@ def get_param_tooltip(name: str, db_path: Path = None) -> dict | None:
         ).fetchone()
         return dict(row) if row else None
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_all_param_tooltips_dict(db_path: Path = None) -> dict[str, dict]:
@@ -1330,7 +1468,7 @@ def upsert_param_tooltip(
         conn.commit()
         return True
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def delete_param_tooltip(name: str, db_path: Path = None) -> bool:
@@ -1343,7 +1481,7 @@ def delete_param_tooltip(name: str, db_path: Path = None) -> bool:
         conn.commit()
         return cur.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def seed_param_tooltips(db_path: Path = None) -> int:
@@ -1381,7 +1519,7 @@ def seed_param_tooltips(db_path: Path = None) -> int:
             logger.info("Seeded %d param tooltips", inserted)
         return inserted
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 # ---------------------------------------------------------------------------
@@ -1407,7 +1545,7 @@ def get_all_indicator_tooltips_dict(db_path: Path = None) -> dict[str, dict]:
             }
         return result
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def get_indicator_tooltip(keyword: str, db_path: Path = None) -> dict | None:
@@ -1419,7 +1557,7 @@ def get_indicator_tooltip(keyword: str, db_path: Path = None) -> dict | None:
         ).fetchone()
         return dict(row) if row else None
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def upsert_indicator_tooltip(
@@ -1443,7 +1581,7 @@ def upsert_indicator_tooltip(
         conn.commit()
         return True
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def delete_indicator_tooltip(keyword: str, db_path: Path = None) -> bool:
@@ -1456,7 +1594,7 @@ def delete_indicator_tooltip(keyword: str, db_path: Path = None) -> bool:
         conn.commit()
         return cur.rowcount > 0
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
 
 
 def seed_indicator_tooltips(db_path: Path = None) -> int:
@@ -1494,4 +1632,633 @@ def seed_indicator_tooltips(db_path: Path = None) -> int:
             logger.info("Seeded %d indicator tooltips", inserted)
         return inserted
     finally:
-        conn.close()
+        pass  # Connection pooled; reused by thread
+
+
+# ---------------------------------------------------------------------------
+# Strategy lifecycle
+# ---------------------------------------------------------------------------
+
+STRATEGY_STATUSES = ("draft", "testing", "validated", "approved", "live", "retired")
+
+
+def update_strategy_status(strategy_id: str, status: str, db_path: Path = None) -> bool:
+    """Update a strategy's lifecycle status.
+
+    Valid statuses: draft, testing, validated, approved, live, retired.
+    """
+    if status not in STRATEGY_STATUSES:
+        raise ValueError(f"Invalid status '{status}'. Must be one of {STRATEGY_STATUSES}")
+    return update_strategy(strategy_id, status=status, db_path=db_path)
+
+
+def list_strategies_by_status(status: str, db_path: Path = None) -> list[dict]:
+    """Return all strategies with a given lifecycle status."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM strategies WHERE status = ? ORDER BY updated_at DESC",
+            (status,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def list_deployable_strategies(db_path: Path = None) -> list[dict]:
+    """Return strategies that are approved or live (eligible for deployment)."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM strategies WHERE status IN ('approved', 'live') ORDER BY updated_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+# ---------------------------------------------------------------------------
+# Live session CRUD
+# ---------------------------------------------------------------------------
+
+def create_live_session(
+    strategy_id: str = None,
+    version_id: str = None,
+    account_id: str = "",
+    account_name: str = "",
+    symbol: str = "",
+    ami_symbol: str = "",
+    bar_interval: int = 1,
+    config: dict = None,
+    db_path: Path = None,
+) -> str:
+    """Create a new live trading session. Returns the session UUID."""
+    session_id = _new_uuid()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO live_sessions
+               (id, strategy_id, version_id, account_id, account_name,
+                symbol, ami_symbol, bar_interval, config_json, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running')""",
+            (session_id, strategy_id, version_id, account_id, account_name,
+             symbol, ami_symbol, bar_interval, json.dumps(config or {})),
+        )
+        conn.commit()
+        return session_id
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def update_live_session(
+    session_id: str,
+    status: str = None,
+    bars_injected: int = None,
+    scans_run: int = None,
+    alerts_fired: int = None,
+    trades_placed: int = None,
+    trades_filled: int = None,
+    realized_pnl: float = None,
+    stopped_at: str = None,
+    db_path: Path = None,
+) -> bool:
+    """Update a live session record."""
+    conn = _get_connection(db_path)
+    try:
+        fields = []
+        values = []
+        for col, val in [("status", status), ("bars_injected", bars_injected),
+                         ("scans_run", scans_run), ("alerts_fired", alerts_fired),
+                         ("trades_placed", trades_placed), ("trades_filled", trades_filled),
+                         ("realized_pnl", realized_pnl), ("stopped_at", stopped_at)]:
+            if val is not None:
+                fields.append(f"{col} = ?")
+                values.append(val)
+        if not fields:
+            return True
+        values.append(session_id)
+        cursor = conn.execute(
+            f"UPDATE live_sessions SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def get_live_session(session_id: str, db_path: Path = None) -> dict | None:
+    """Fetch a single live session by UUID."""
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM live_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["config"] = json.loads(d.pop("config_json", "{}"))
+        return d
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def list_live_sessions(limit: int = 50, db_path: Path = None) -> list[dict]:
+    """Return live sessions, newest first."""
+    conn = _get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT * FROM live_sessions ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["config"] = json.loads(d.pop("config_json", "{}"))
+            result.append(d)
+        return result
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+# ---------------------------------------------------------------------------
+# Live trade CRUD
+# ---------------------------------------------------------------------------
+
+def record_live_trade(
+    session_id: str,
+    signal_type: str,
+    symbol: str,
+    size: int = 1,
+    signal_price: float = None,
+    fill_price: float = None,
+    order_id: str = "",
+    status: str = "pending",
+    pnl: float = None,
+    elapsed_seconds: float = None,
+    error_message: str = "",
+    indicators: dict = None,
+    strategy_id: str = None,
+    version_id: str = None,
+    strategy_name: str = "",
+    signal_at: str = None,
+    executed_at: str = None,
+    db_path: Path = None,
+) -> str:
+    """Record a live trade. Returns the trade UUID."""
+    trade_id = _new_uuid()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO live_trades
+               (id, session_id, strategy_id, version_id, signal_type, symbol,
+                size, signal_price, fill_price, order_id, status, pnl,
+                elapsed_seconds, error_message, indicators_json,
+                strategy_name, signal_at, executed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (trade_id, session_id, strategy_id, version_id, signal_type, symbol,
+             size, signal_price, fill_price, order_id, status, pnl,
+             elapsed_seconds, error_message, json.dumps(indicators or {}),
+             strategy_name, signal_at, executed_at),
+        )
+        conn.commit()
+        return trade_id
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def update_live_trade(
+    trade_id: str,
+    fill_price: float = None,
+    status: str = None,
+    pnl: float = None,
+    elapsed_seconds: float = None,
+    error_message: str = None,
+    executed_at: str = None,
+    order_id: str = None,
+    db_path: Path = None,
+) -> bool:
+    """Update a live trade record."""
+    conn = _get_connection(db_path)
+    try:
+        fields = []
+        values = []
+        for col, val in [("fill_price", fill_price), ("status", status),
+                         ("pnl", pnl), ("elapsed_seconds", elapsed_seconds),
+                         ("error_message", error_message), ("executed_at", executed_at),
+                         ("order_id", order_id)]:
+            if val is not None:
+                fields.append(f"{col} = ?")
+                values.append(val)
+        if not fields:
+            return True
+        values.append(trade_id)
+        cursor = conn.execute(
+            f"UPDATE live_trades SET {', '.join(fields)} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def list_live_trades(
+    session_id: str = None,
+    strategy_id: str = None,
+    symbol: str = None,
+    limit: int = 200,
+    db_path: Path = None,
+) -> list[dict]:
+    """Return live trades with optional filters, newest first."""
+    conn = _get_connection(db_path)
+    try:
+        clauses = []
+        params = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if strategy_id:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM live_trades {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["indicators"] = json.loads(d.pop("indicators_json", "{}"))
+            result.append(d)
+        return result
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def get_daily_pnl(date_str: str = None, strategy_id: str = None, db_path: Path = None) -> float:
+    """Get total realized P&L for a given date (defaults to today)."""
+    if date_str is None:
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    conn = _get_connection(db_path)
+    try:
+        clauses = ["DATE(executed_at) = ?"]
+        params = [date_str]
+        if strategy_id:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        row = conn.execute(
+            f"SELECT COALESCE(SUM(pnl), 0.0) as total FROM live_trades WHERE {' AND '.join(clauses)} AND status = 'filled'",
+            params,
+        ).fetchone()
+        return float(row["total"]) if row else 0.0
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+# ---------------------------------------------------------------------------
+# Live signal CRUD
+# ---------------------------------------------------------------------------
+
+def record_live_signal(
+    session_id: str,
+    signal_type: str,
+    symbol: str,
+    close_price: float = None,
+    was_traded: bool = False,
+    was_deduped: bool = False,
+    indicators: dict = None,
+    conditions: dict = None,
+    strategy_id: str = None,
+    strategy_name: str = "",
+    signal_at: str = None,
+    db_path: Path = None,
+) -> str:
+    """Record a detected signal. Returns the signal UUID."""
+    signal_id = _new_uuid()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO live_signals
+               (id, session_id, strategy_id, signal_type, symbol, close_price,
+                was_traded, was_deduped, indicators_json, conditions_json,
+                strategy_name, signal_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (signal_id, session_id, strategy_id, signal_type, symbol, close_price,
+             1 if was_traded else 0, 1 if was_deduped else 0,
+             json.dumps(indicators or {}), json.dumps(conditions or {}),
+             strategy_name, signal_at),
+        )
+        conn.commit()
+        return signal_id
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def list_live_signals(
+    session_id: str = None,
+    strategy_id: str = None,
+    signal_type: str = None,
+    limit: int = 500,
+    db_path: Path = None,
+) -> list[dict]:
+    """Return live signals with optional filters, newest first."""
+    conn = _get_connection(db_path)
+    try:
+        clauses = []
+        params = []
+        if session_id:
+            clauses.append("session_id = ?")
+            params.append(session_id)
+        if strategy_id:
+            clauses.append("strategy_id = ?")
+            params.append(strategy_id)
+        if signal_type:
+            clauses.append("signal_type = ?")
+            params.append(signal_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM live_signals {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["indicators"] = json.loads(d.pop("indicators_json", "{}"))
+            d["conditions"] = json.loads(d.pop("conditions_json", "{}"))
+            result.append(d)
+        return result
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def get_signal_accuracy(
+    strategy_id: str = None,
+    days: int = 30,
+    db_path: Path = None,
+) -> dict:
+    """Compute signal accuracy metrics over a time window.
+
+    Returns dict with total_signals, traded_signals, deduped_signals,
+    accuracy stats grouped by signal_type, by hour, and profitability
+    analysis linking signals to subsequent trades.
+    """
+    conn = _get_connection(db_path)
+    try:
+        clauses = ["s.created_at >= datetime('now', ?)"]
+        params = [f"-{days} days"]
+        if strategy_id:
+            clauses.append("s.strategy_id = ?")
+            params.append(strategy_id)
+        where = f"WHERE {' AND '.join(clauses)}"
+
+        # Overall counts
+        row = conn.execute(
+            f"""SELECT
+                COUNT(*) as total,
+                SUM(s.was_traded) as traded,
+                SUM(s.was_deduped) as deduped
+            FROM live_signals s {where}""",
+            params,
+        ).fetchone()
+
+        # Per signal type breakdown
+        type_rows = conn.execute(
+            f"""SELECT s.signal_type,
+                COUNT(*) as count,
+                SUM(s.was_traded) as traded
+            FROM live_signals s {where}
+            GROUP BY s.signal_type""",
+            params,
+        ).fetchall()
+
+        # By hour-of-day breakdown
+        hour_rows = conn.execute(
+            f"""SELECT strftime('%H', s.signal_at) as hour,
+                COUNT(*) as count,
+                SUM(s.was_traded) as traded
+            FROM live_signals s {where}
+              AND s.signal_at IS NOT NULL
+            GROUP BY hour
+            ORDER BY hour""",
+            params,
+        ).fetchall()
+
+        # Profitability: join signals with subsequent trades
+        # Match signals to trades in the same session with matching type
+        # where the trade happened within 60 seconds of the signal
+        profit_rows = conn.execute(
+            f"""SELECT
+                s.signal_type,
+                COUNT(DISTINCT s.id) as signal_count,
+                COUNT(DISTINCT t.id) as trade_count,
+                SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN t.pnl < 0 THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN t.pnl = 0 OR t.pnl IS NULL THEN 1 ELSE 0 END) as breakeven,
+                COALESCE(SUM(t.pnl), 0.0) as total_pnl,
+                COALESCE(AVG(t.pnl), 0.0) as avg_pnl
+            FROM live_signals s
+            LEFT JOIN live_trades t ON t.session_id = s.session_id
+                AND t.signal_type = s.signal_type
+                AND t.status = 'filled'
+                AND ABS(julianday(t.signal_at) - julianday(s.signal_at)) < 0.001
+            {where}
+            GROUP BY s.signal_type""",
+            params,
+        ).fetchall()
+
+        return {
+            "total_signals": row["total"] if row else 0,
+            "traded_signals": row["traded"] if row else 0,
+            "deduped_signals": row["deduped"] if row else 0,
+            "by_type": {r["signal_type"]: {"count": r["count"], "traded": r["traded"]}
+                        for r in type_rows},
+            "by_hour": {r["hour"]: {"count": r["count"], "traded": r["traded"]}
+                        for r in hour_rows},
+            "profitability": {r["signal_type"]: {
+                "signal_count": r["signal_count"],
+                "trade_count": r["trade_count"],
+                "wins": r["wins"] or 0,
+                "losses": r["losses"] or 0,
+                "breakeven": r["breakeven"] or 0,
+                "total_pnl": round(r["total_pnl"], 2),
+                "avg_pnl": round(r["avg_pnl"], 2),
+                "win_rate": round(r["wins"] / r["trade_count"] * 100, 1) if r["trade_count"] else 0,
+            } for r in profit_rows},
+            "days": days,
+        }
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def get_pnl_attribution(
+    days: int = 30,
+    group_by: str = "strategy",
+    db_path: Path = None,
+) -> list[dict]:
+    """Get P&L attribution grouped by strategy, symbol, or hour.
+
+    Returns list of dicts with group key and total_pnl, trade_count, win_count.
+    """
+    conn = _get_connection(db_path)
+    try:
+        group_col = {
+            "strategy": "strategy_name",
+            "symbol": "symbol",
+            "hour": "strftime('%H', executed_at)",
+            "weekday": "strftime('%w', executed_at)",
+        }.get(group_by, "strategy_name")
+
+        rows = conn.execute(
+            f"""SELECT {group_col} as group_key,
+                COUNT(*) as trade_count,
+                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as win_count,
+                COALESCE(SUM(pnl), 0.0) as total_pnl,
+                COALESCE(AVG(pnl), 0.0) as avg_pnl
+            FROM live_trades
+            WHERE status = 'filled'
+              AND executed_at >= datetime('now', ?)
+            GROUP BY {group_col}
+            ORDER BY total_pnl DESC""",
+            (f"-{days} days",),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward run CRUD
+# ---------------------------------------------------------------------------
+
+def create_walk_forward_run(
+    strategy_id: str,
+    version_id: str,
+    symbol: str = "",
+    total_period: str = "2y",
+    in_sample_pct: float = 0.70,
+    num_windows: int = 5,
+    anchored: bool = False,
+    windows_json: str = "[]",
+    db_path: Path = None,
+) -> str:
+    """Create a new walk-forward run record.  Returns the run UUID.
+
+    Parameters
+    ----------
+    strategy_id : str
+        UUID of the parent strategy.
+    version_id : str
+        UUID of the strategy version being analysed.
+    symbol : str
+        Ticker symbol used for the analysis.
+    total_period : str
+        Total analysis period code (e.g. ``'2y'``).
+    in_sample_pct : float
+        Fraction of each window used for in-sample optimisation.
+    num_windows : int
+        Number of IS/OOS window pairs.
+    anchored : bool
+        ``True`` for anchored windowing, ``False`` for rolling.
+    windows_json : str
+        JSON-serialised list of window definitions.
+
+    Returns
+    -------
+    str
+        The UUID of the newly created walk-forward run.
+    """
+    wf_run_id = _new_uuid()
+    conn = _get_connection(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO walk_forward_runs
+               (id, strategy_id, version_id, symbol, total_period,
+                in_sample_pct, num_windows, anchored, windows_json,
+                status, started_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', CURRENT_TIMESTAMP)""",
+            (wf_run_id, strategy_id, version_id, symbol, total_period,
+             in_sample_pct, num_windows, 1 if anchored else 0, windows_json),
+        )
+        conn.commit()
+        return wf_run_id
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def get_walk_forward_results(wf_run_id: str, db_path: Path = None) -> dict | None:
+    """Fetch a walk-forward run record with parsed JSON fields.
+
+    Parameters
+    ----------
+    wf_run_id : str
+        UUID of the walk-forward run.
+
+    Returns
+    -------
+    dict | None
+        The run record with ``windows`` and ``results`` parsed from JSON,
+        or ``None`` if not found.
+    """
+    conn = _get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT * FROM walk_forward_runs WHERE id = ?", (wf_run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["windows"] = json.loads(d.pop("windows_json", "[]"))
+        d["results"] = json.loads(d.pop("results_json", "{}"))
+        d["anchored"] = bool(d.get("anchored", 0))
+        return d
+    finally:
+        pass  # Connection pooled; reused by thread
+
+
+def list_walk_forward_runs(
+    strategy_id: str = None,
+    limit: int = 50,
+    db_path: Path = None,
+) -> list[dict]:
+    """Return walk-forward runs, newest first, optionally filtered by strategy.
+
+    Parameters
+    ----------
+    strategy_id : str, optional
+        If provided, only return runs for this strategy.
+    limit : int
+        Maximum number of records to return.
+
+    Returns
+    -------
+    list[dict]
+        Walk-forward run records with parsed JSON fields.
+    """
+    conn = _get_connection(db_path)
+    try:
+        if strategy_id:
+            rows = conn.execute(
+                "SELECT * FROM walk_forward_runs WHERE strategy_id = ? ORDER BY created_at DESC LIMIT ?",
+                (strategy_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM walk_forward_runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["windows"] = json.loads(d.pop("windows_json", "[]"))
+            d["results"] = json.loads(d.pop("results_json", "{}"))
+            d["anchored"] = bool(d.get("anchored", 0))
+            result.append(d)
+        return result
+    finally:
+        pass  # Connection pooled; reused by thread

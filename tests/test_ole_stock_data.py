@@ -133,7 +133,7 @@ class TestStockDataFetcher:
             _make_mock_quotation(base_dt + timedelta(seconds=20), 3427.2, 3428.0, 3427.0, 3427.8, 15),
             _make_mock_quotation(base_dt + timedelta(seconds=40), 3427.8, 3428.2, 3427.5, 3428.0, 20),
         ]
-        stock = _make_mock_stock("GCZ5", ticks)
+        stock = _make_mock_stock("GC", ticks)
 
         mock_app = MagicMock()
         mock_app.Stocks.return_value = stock
@@ -144,7 +144,7 @@ class TestStockDataFetcher:
         fetcher.load_database()
 
         result = fetcher.fetch_ohlcv(
-            "GCZ5",
+            "GC",
             base_dt - timedelta(minutes=1),
             base_dt + timedelta(minutes=1),
         )
@@ -163,7 +163,7 @@ class TestStockDataFetcher:
         from scripts.ole_stock_data import StockDataFetcher
 
         fetcher = StockDataFetcher()
-        result = fetcher.fetch_ohlcv("GCZ5", datetime.now(), datetime.now())
+        result = fetcher.fetch_ohlcv("GC", datetime.now(), datetime.now())
         assert result["error"] is not None
         assert "Not connected" in result["error"]
 
@@ -198,7 +198,7 @@ class TestStockDataFetcher:
         fetcher.connect()
         fetcher.load_database()
 
-        result = fetcher.fetch_ohlcv("GCZ5", datetime.now(), datetime.now())
+        result = fetcher.fetch_ohlcv("GC", datetime.now(), datetime.now())
         assert result["error"] is not None
         assert "No quotation" in result["error"]
 
@@ -232,14 +232,14 @@ class TestOhlcvCache:
             start = datetime(2025, 7, 21, 1, 0, 0)
             end = datetime(2025, 7, 21, 2, 0, 0)
 
-            result = get_ohlcv_cached("GCZ5", start, end, padding_before=5, padding_after=5)
+            result = get_ohlcv_cached("GC", start, end, padding_before=5, padding_after=5)
 
             assert result["error"] is None
             assert len(result["data"]) == 1
             mock_instance.connect.assert_called_once()
 
             # Verify cache file was written
-            cache_file = tmp_path / "GCZ5.json"
+            cache_file = tmp_path / "GC.json"
             assert cache_file.exists()
         finally:
             mod.CACHE_DIR = original_cache
@@ -259,7 +259,7 @@ class TestOhlcvCache:
 
             # Pre-populate cache
             cache_data = {
-                "symbol": "GCZ5",
+                "symbol": "GC",
                 "fetched_at": datetime.now().isoformat(),
                 "window_start": (start - timedelta(minutes=60)).isoformat(),
                 "window_end": (end + timedelta(minutes=60)).isoformat(),
@@ -268,10 +268,10 @@ class TestOhlcvCache:
                      "low": 3426.0, "close": 3427.5, "volume": 100},
                 ],
             }
-            cache_file = tmp_path / "GCZ5.json"
+            cache_file = tmp_path / "GC.json"
             cache_file.write_text(json.dumps(cache_data), encoding="utf-8")
 
-            result = get_ohlcv_cached("GCZ5", start, end, padding_before=5, padding_after=5)
+            result = get_ohlcv_cached("GC", start, end, padding_before=5, padding_after=5)
 
             assert result["error"] is None
             # COM should NOT have been called
@@ -295,7 +295,7 @@ class TestOhlcvCache:
             start = datetime(2025, 7, 21, 1, 0, 0)
             end = datetime(2025, 7, 21, 2, 0, 0)
 
-            result = get_ohlcv_cached("GCZ5", start, end, padding_before=5, padding_after=5)
+            result = get_ohlcv_cached("GC", start, end, padding_before=5, padding_after=5)
 
             assert result["error"] is not None
             assert "not running" in result["error"].lower()

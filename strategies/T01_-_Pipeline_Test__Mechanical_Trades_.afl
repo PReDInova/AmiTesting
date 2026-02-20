@@ -1,0 +1,36 @@
+// ===========================================
+// T01 - Pipeline Test (Mechanical Trades)
+// ===========================================
+//
+// Ultra-simple strategy that generates trades at fixed intervals.
+// No indicators, no filters, no TimeFrameSet -- just alternating
+// Buy/Sell every N bars. Use this to verify the backtest pipeline
+// (AFL -> APX -> AmiBroker OLE -> results) is working end-to-end.
+//
+// If this strategy produces zero trades, the problem is in the
+// pipeline or data setup, not in the strategy logic.
+
+// ---- Trade every 20 bars: buy at bar 0, sell at bar 10, repeat ----
+barMod = BarIndex() % 20;
+
+Buy  = barMod == 0;
+Sell = barMod == 10;
+
+// No short trades -- keep it simple
+Short = 0;
+Cover = 0;
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove excess signals ----
+Buy  = ExRem(Buy, Sell);
+Sell = ExRem(Sell, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Sell * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | T01 Pipeline Test | Bar=" + NumToStr(BarIndex(), 1.0) +
+        " | Mod20=" + NumToStr(barMod, 1.0);

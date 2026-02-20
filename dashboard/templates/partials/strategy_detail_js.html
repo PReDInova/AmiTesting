@@ -1,0 +1,203 @@
+<script>
+// ── Param info tooltips ──
+var paramInfo = {};
+
+function escHtml(text) {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+               .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function setupParamInfoPopovers() {
+    // Dismiss any open popover when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.sp-info-btn') && !e.target.closest('.popover')) {
+            document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+                var pop = bootstrap.Popover.getInstance(btn);
+                if (pop) pop.hide();
+            });
+        }
+    });
+
+    document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+        var pName = btn.dataset.paramInfo;
+        var info = paramInfo[pName];
+        if (!info) return;
+
+        // Show the button (it was hidden with d-none until we confirmed data exists)
+        btn.classList.remove('d-none');
+
+        var html =
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Indicator</div>' +
+            '<div class="pi-section-text">' + escHtml(info.indicator || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Formula</div>' +
+            '<div class="pi-section-text">' + escHtml(info.math || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">This Parameter</div>' +
+            '<div class="pi-section-text">' + escHtml(info.param || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">Typical Value</div>' +
+            '<div class="pi-section-text">' + escHtml(info.typical || '') + '</div>' +
+            '</div>' +
+            '<div class="pi-section">' +
+            '<div class="pi-section-label">When to Change</div>' +
+            '<div class="pi-section-text">' + escHtml(info.guidance || '') + '</div>' +
+            '</div>';
+
+        var titleHtml = '<span>' + escHtml(pName) + '</span>' +
+            '<button type="button" class="pi-close" aria-label="Close">&times;</button>';
+
+        new bootstrap.Popover(btn, {
+            html: true,
+            content: html,
+            title: titleHtml,
+            trigger: 'click',
+            placement: 'right',
+            fallbackPlacements: ['right', 'left', 'bottom', 'top'],
+            customClass: 'param-info-pop',
+            container: 'body',
+            sanitize: false,
+        });
+    });
+
+    // Close button inside popovers
+    document.addEventListener('click', function(e) {
+        var closeBtn = e.target.closest('.pi-close');
+        if (!closeBtn) return;
+        var popEl = closeBtn.closest('.popover');
+        if (!popEl) return;
+        document.querySelectorAll('.sp-info-btn').forEach(function(btn) {
+            var pop = bootstrap.Popover.getInstance(btn);
+            if (pop && pop.tip === popEl) pop.hide();
+        });
+    });
+}
+
+// Fetch param tooltips and wire up popovers
+fetch('/api/param-tooltips')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        paramInfo = (data && data.tooltips) || {};
+        setupParamInfoPopovers();
+    })
+    .catch(function() {});
+
+// Store version AFL content for preview
+const versionAfl = {
+    {% for v in versions %}
+    "{{ v.id }}": {{ v.afl_content|tojson }},
+    {% endfor %}
+};
+
+function showAflPreview(versionId) {
+    const content = versionAfl[versionId] || "(No AFL content)";
+    document.getElementById("aflPreviewContent").textContent = content;
+
+    // Find version number for title
+    {% for v in versions %}
+    if (versionId === "{{ v.id }}") {
+        document.getElementById("aflPreviewTitle").textContent = "AFL Preview — v{{ v.version_number }}{% if v.label %} ({{ v.label }}){% endif %}";
+    }
+    {% endfor %}
+
+    new bootstrap.Modal(document.getElementById("aflPreviewModal")).show();
+}
+
+function updateRunButton() {
+    const isOptimize = document.getElementById('modeOptimize')?.checked;
+    const warning = document.getElementById('optimizeWarning');
+    const btnText = document.getElementById('runButtonText');
+    if (warning) warning.style.display = isOptimize ? 'block' : 'none';
+    if (btnText) btnText.textContent = isOptimize ? 'Run Optimization' : 'Run Backtest';
+}
+
+function toggleOptRange(checkbox) {
+    const param = checkbox.dataset.param;
+    document.querySelectorAll(`.opt-range[data-param="${param}"]`).forEach(input => {
+        input.disabled = !checkbox.checked;
+    });
+}
+
+// ── Sync version play-button symbol with page-level selector ──
+function updateVersionSymbol(val) {
+    document.querySelectorAll('.version-symbol-input').forEach(function(inp) { inp.value = val; });
+}
+
+// ── Sync version play-button date range with page-level selector ──
+function updateVersionDateRange(val) {
+    document.querySelectorAll('.version-daterange-input').forEach(function(inp) { inp.value = val; });
+}
+
+// ── Modal date range: combine duration + offset into a single code ──
+var _datasetDates = null;
+
+function updateModalDateRange() {
+    var duration = document.getElementById('modalDuration');
+    var offset = document.getElementById('modalOffset');
+    var hidden = document.getElementById('modalDateRangeValue');
+    var preview = document.getElementById('dateRangePreview');
+
+    if (!duration || !hidden) return;
+
+    var durVal = duration.value;
+    var offVal = offset ? offset.value : '';
+
+    var code;
+    if (offVal) {
+        // Compound: duration@offset (from data start)
+        code = durVal + '@' + offVal;
+    } else {
+        // Simple: measure back from data end
+        code = durVal;
+    }
+    hidden.value = code;
+
+    // Update preview text
+    var durLabels = {'1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': 'full year'};
+    var offLabels = {'0m': 'the beginning', '3m': '3 months in', '6m': '6 months in', '9m': '9 months in'};
+
+    if (offVal) {
+        var msg = durLabels[durVal] + ' of data, starting ' + offLabels[offVal];
+        if (_datasetDates && _datasetDates.first_date) {
+            msg += ' (from ' + _datasetDates.first_date + ')';
+        }
+        preview.textContent = msg + '.';
+    } else if (durVal === '1y') {
+        var msg = 'Using the full year of available data';
+        if (_datasetDates && _datasetDates.first_date && _datasetDates.last_date) {
+            msg += ' (' + _datasetDates.first_date + ' to ' + _datasetDates.last_date + ')';
+        }
+        preview.textContent = msg + '.';
+    } else {
+        var msg = 'Last ' + durLabels[durVal] + ' of available data';
+        if (_datasetDates && _datasetDates.last_date) {
+            msg += ' (ending ' + _datasetDates.last_date + ')';
+        }
+        preview.textContent = msg + '.';
+    }
+}
+
+// Fetch dataset dates for preview
+fetch('/api/dataset-dates')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.first_date && data.last_date) {
+            _datasetDates = data;
+            // Update date range selector options with actual dates
+            updateModalDateRange();
+            updateDateRangeTooltips();
+        }
+    })
+    .catch(function() {});
+
+function updateDateRangeTooltips() {
+    if (!_datasetDates) return;
+    document.querySelectorAll('.date-range-selector').forEach(function(sel) {
+        sel.title = 'Data: ' + _datasetDates.first_date + ' to ' + _datasetDates.last_date;
+    });
+}
+</script>

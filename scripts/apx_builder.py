@@ -33,7 +33,7 @@ from config.settings import (
     APX_TEMPLATE,
     APX_OUTPUT,
     AFL_STRATEGY_FILE,
-    GCZ25_SYMBOL,
+    DEFAULT_SYMBOL,
     setup_logging,
 )
 
@@ -247,7 +247,7 @@ def build_apx(
         logger.info("ApplyTo set to 0 (All Symbols)")
         effective_symbol = ""
     else:
-        effective_symbol = symbol or GCZ25_SYMBOL
+        effective_symbol = symbol or DEFAULT_SYMBOL
 
     sym_open = b"<Symbol>"
     sym_close = b"</Symbol>"
@@ -257,25 +257,24 @@ def build_apx(
         output = output[:sym_start] + effective_symbol.encode("iso-8859-1") + output[sym_end:]
         logger.info("Symbol set to: %s", effective_symbol or "(all symbols)")
 
-    # --- Set Date Range (backtest window) ------------------------------------
+    # --- Date Range -------------------------------------------------------
+    # AmiBroker's OLE interface does NOT reliably honour APX date range
+    # settings (RangeType, FromDate, ToDate) — it applies RangeType but
+    # uses its own cached dates, ignoring the values in the APX XML.
+    # Therefore we keep RangeType=0 ("All quotes") so AmiBroker loads the
+    # full dataset, and enforce the date window via an AFL-level DateNum()
+    # filter injected by run.py.  The APX date fields are left at their
+    # template defaults (unused with RangeType=0).
     if date_range and dataset_start and dataset_end:
         from_date, to_date = _compute_date_range(date_range, dataset_start, dataset_end)
-        from_val = f"{from_date} 00:00:00"
-        to_val = to_date
-
-        # General section dates
-        output = _replace_xml_tag(output, b"<FromDate>", b"</FromDate>", from_val)
-        output = _replace_xml_tag(output, b"<ToDate>", b"</ToDate>", to_val)
-
-        # BacktestSettings range dates
-        output = _replace_xml_tag(output, b"<RangeFromDate>", b"</RangeFromDate>", from_val)
-        output = _replace_xml_tag(output, b"<RangeToDate>", b"</RangeToDate>", to_val)
-
-        # BacktestSettings backtest-specific range dates
-        output = _replace_xml_tag(output, b"<BacktestRangeFromDate>", b"</BacktestRangeFromDate>", from_val)
-        output = _replace_xml_tag(output, b"<BacktestRangeToDate>", b"</BacktestRangeToDate>", to_val)
-
-        logger.info("Date range set: %s to %s (code=%s)", from_date, to_date, date_range)
+        logger.info("Date range computed: %s to %s (code=%s) — enforced via AFL filter, APX RangeType=0",
+                     from_date, to_date, date_range)
+    elif date_range:
+        logger.warning(
+            "Date range '%s' requested but dataset bounds missing "
+            "(start=%s, end=%s) — no date filtering will be applied.",
+            date_range, dataset_start, dataset_end,
+        )
 
     # Write output as raw bytes (no text-mode conversion) -------------------
     output_apx_path.write_bytes(output)

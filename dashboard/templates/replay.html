@@ -1,0 +1,511 @@
+{% extends "base.html" %}
+{% block title %}Signal Replay - AmiTesting{% endblock %}
+
+{% block extra_head %}
+<style>
+    .replay-control { border-radius: 50%; width: 40px; height: 40px; }
+    .timeline-event {
+        padding: 0.5rem 0.75rem;
+        border-left: 3px solid #dee2e6;
+        margin-bottom: 0.5rem;
+        border-radius: 0 6px 6px 0;
+        font-size: 0.875rem;
+        transition: background 0.2s;
+    }
+    .timeline-event.active { background: rgba(13,110,253,0.08); }
+    .timeline-event.signal-buy { border-left-color: #198754; }
+    .timeline-event.signal-short { border-left-color: #dc3545; }
+    .timeline-event.trade { border-left-color: #0d6efd; }
+    .timeline-event .event-time { color: #6c757d; font-size: 0.75rem; }
+    .timeline-event .event-badge { font-size: 0.7rem; }
+    .match-icon { font-size: 0.8rem; }
+    .prox-bar { height: 4px; border-radius: 2px; }
+    #timelineContainer { max-height: 600px; overflow-y: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0">
+        <i class="bi bi-skip-forward-circle me-2 text-primary"></i>Signal Replay
+    </h4>
+</div>
+
+<!-- ── Session Selection ──────────────────────────────── -->
+<div id="replaySetup">
+    <div class="row g-4">
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-clock-history me-2"></i>Select Session to Replay
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="sessionSelect" class="form-label fw-semibold">Live Session</label>
+                        <select class="form-select" id="sessionSelect">
+                            <option value="">-- Select a recorded session --</option>
+                            {% for s in sessions %}
+                            <option value="{{ s.id }}"
+                                    data-symbol="{{ s.ami_symbol or s.symbol }}"
+                                    data-interval="{{ s.bar_interval }}"
+                                    data-strategy="{{ s.strategy_id or '' }}">
+                                {{ s.started_at[:16] if s.started_at else 'Unknown' }}
+                                &mdash; {{ s.ami_symbol or s.symbol }}
+                                ({{ s.scans_run }} scans, {{ s.alerts_fired }} signals, {{ s.trades_placed }} trades)
+                                {% if s.status == 'running' %}
+                                <span class="text-success">[Running]</span>
+                                {% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button class="btn btn-primary w-100" id="btnLoadReplay" disabled>
+                        <i class="bi bi-play-circle me-2"></i>Load Session for Replay
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-info-circle me-2"></i>About Signal Replay
+                </div>
+                <div class="card-body">
+                    <div class="callout-blue">
+                        <small>
+                            <strong>How it works:</strong> Select a recorded live session to step through
+                            its signals and trades chronologically. See what indicators looked like at each
+                            signal, compare actual signals against re-evaluated conditions, and review
+                            trade outcomes in context.
+                        </small>
+                    </div>
+                    <ul class="mt-3 small">
+                        <li>Step forward/backward through events</li>
+                        <li>See indicator snapshots at each signal point</li>
+                        <li>Compare actual vs. hypothetical signals</li>
+                        <li>Review proximity-to-signal at each step</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Replay Dashboard ──────────────────────────────── -->
+<div id="replayDashboard" style="display: none;">
+    <!-- Summary Row -->
+    <div class="row g-3 mb-4">
+        <div class="col">
+            <div class="metric-card border-blue">
+                <div class="metric-value" id="rTotalEvents">0</div>
+                <div class="metric-label">Events</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="metric-card border-green">
+                <div class="metric-value" id="rSignalCount">0</div>
+                <div class="metric-label">Signals</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="metric-card border-amber">
+                <div class="metric-value" id="rTradeCount">0</div>
+                <div class="metric-label">Trades</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="metric-card border-green" id="rPnlCard">
+                <div class="metric-value" id="rTotalPnl">$0.00</div>
+                <div class="metric-label">Total P&L</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="metric-card border-gray" id="rAccuracyCard" style="display: none;">
+                <div class="metric-value" id="rAccuracy">-</div>
+                <div class="metric-label">Match Rate</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls + Progress -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-controller me-2"></i>Replay Controls</span>
+            <small class="text-muted" id="progressText">0 / 0 events</small>
+        </div>
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <button class="btn btn-outline-secondary btn-sm" id="btnReset" title="Reset to start">
+                    <i class="bi bi-skip-backward-fill"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" id="btnStepBack" title="Step back">
+                    <i class="bi bi-skip-start-fill"></i>
+                </button>
+                <button class="btn btn-primary" id="btnStep" title="Step forward">
+                    <i class="bi bi-play-fill me-1"></i>Step
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" id="btnStep5" title="Step 5">
+                    5x
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" id="btnToEnd" title="Go to end">
+                    <i class="bi bi-skip-end-fill"></i>
+                </button>
+                <div class="vr"></div>
+                <button class="btn btn-outline-danger btn-sm" id="btnNewSession">
+                    <i class="bi bi-arrow-clockwise me-1"></i>New Session
+                </button>
+            </div>
+            <div class="progress" style="height: 8px;">
+                <div class="progress-bar bg-primary" id="replayProgress" style="width: 0%;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Event + Timeline -->
+    <div class="row g-4">
+        <!-- Current Event Detail -->
+        <div class="col-lg-7">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <i class="bi bi-eye me-2"></i>Current Event
+                </div>
+                <div class="card-body" id="currentEventBody">
+                    <div class="text-center text-muted py-4">
+                        Click <strong>Step</strong> to begin replay...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Proximity at Current Step -->
+            <div class="card" id="replayProximityCard" style="display: none;">
+                <div class="card-header">
+                    <i class="bi bi-bullseye me-2"></i>Condition Proximity
+                </div>
+                <div class="card-body" id="replayProximityBody">
+                </div>
+            </div>
+        </div>
+
+        <!-- Event Timeline -->
+        <div class="col-lg-5">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-list-task me-2"></i>Event Timeline</span>
+                    <span class="badge bg-secondary" id="timelineCount">0</span>
+                </div>
+                <div class="card-body p-2" id="timelineContainer">
+                    <div class="text-center text-muted py-4">
+                        Load a session to see the timeline...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+    var sessionSelect = document.getElementById('sessionSelect');
+    var btnLoad = document.getElementById('btnLoadReplay');
+    var setupDiv = document.getElementById('replaySetup');
+    var dashDiv = document.getElementById('replayDashboard');
+    var allEvents = [];
+    var currentIdx = -1;
+
+    sessionSelect.addEventListener('change', function() {
+        btnLoad.disabled = !sessionSelect.value;
+    });
+
+    btnLoad.addEventListener('click', function() {
+        btnLoad.disabled = true;
+        btnLoad.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Loading...';
+
+        fetch('/api/replay/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ session_id: sessionSelect.value }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.error) {
+                alert('Error: ' + data.error);
+                btnLoad.disabled = false;
+                btnLoad.innerHTML = '<i class="bi bi-play-circle me-2"></i>Load Session for Replay';
+                return;
+            }
+            // Load all events
+            return fetch('/api/replay/events').then(function(r) { return r.json(); });
+        })
+        .then(function(data) {
+            if (!data) return;
+            allEvents = data.events || [];
+            currentIdx = -1;
+            setupDiv.style.display = 'none';
+            dashDiv.style.display = 'block';
+            renderSummary();
+            renderTimeline();
+            updateProgress();
+        })
+        .catch(function(err) {
+            alert('Error: ' + err.message);
+            btnLoad.disabled = false;
+            btnLoad.innerHTML = '<i class="bi bi-play-circle me-2"></i>Load Session for Replay';
+        });
+    });
+
+    // Controls
+    document.getElementById('btnStep').addEventListener('click', function() { stepForward(1); });
+    document.getElementById('btnStep5').addEventListener('click', function() { stepForward(5); });
+    document.getElementById('btnStepBack').addEventListener('click', function() { stepBack(1); });
+    document.getElementById('btnReset').addEventListener('click', function() { jumpTo(0); });
+    document.getElementById('btnToEnd').addEventListener('click', function() { jumpTo(allEvents.length - 1); });
+    document.getElementById('btnNewSession').addEventListener('click', function() {
+        setupDiv.style.display = 'block';
+        dashDiv.style.display = 'none';
+        allEvents = [];
+        currentIdx = -1;
+        btnLoad.disabled = false;
+        btnLoad.innerHTML = '<i class="bi bi-play-circle me-2"></i>Load Session for Replay';
+    });
+
+    function stepForward(n) {
+        var end = Math.min(currentIdx + n, allEvents.length - 1);
+        if (end > currentIdx) {
+            currentIdx = end;
+            renderCurrentEvent();
+            updateProgress();
+            highlightTimeline();
+        }
+    }
+
+    function stepBack(n) {
+        var target = Math.max(currentIdx - n, 0);
+        if (target < currentIdx || currentIdx < 0) {
+            currentIdx = target;
+            renderCurrentEvent();
+            updateProgress();
+            highlightTimeline();
+        }
+    }
+
+    function jumpTo(pos) {
+        currentIdx = Math.max(0, Math.min(pos, allEvents.length - 1));
+        renderCurrentEvent();
+        updateProgress();
+        highlightTimeline();
+    }
+
+    function renderSummary() {
+        var signals = allEvents.filter(function(e) { return e.event_type === 'signal'; });
+        var trades = allEvents.filter(function(e) { return e.event_type === 'trade'; });
+        var totalPnl = trades.reduce(function(s, t) { return s + (t.pnl || 0); }, 0);
+        var matched = allEvents.filter(function(e) { return e.would_signal !== null; });
+        var matches = matched.filter(function(e) {
+            var actual = e.event_type === 'signal' && e.signal_type;
+            return !!actual === e.would_signal;
+        });
+
+        document.getElementById('rTotalEvents').textContent = allEvents.length;
+        document.getElementById('rSignalCount').textContent = signals.length;
+        document.getElementById('rTradeCount').textContent = trades.length;
+        document.getElementById('rTotalPnl').textContent = '$' + totalPnl.toFixed(2);
+        var pnlCard = document.getElementById('rPnlCard');
+        pnlCard.className = 'metric-card ' + (totalPnl >= 0 ? 'border-green' : 'border-red');
+
+        if (matched.length > 0) {
+            document.getElementById('rAccuracyCard').style.display = '';
+            var pct = matched.length > 0 ? (matches.length / matched.length * 100).toFixed(1) : '-';
+            document.getElementById('rAccuracy').textContent = pct + '%';
+        }
+    }
+
+    function renderTimeline() {
+        var container = document.getElementById('timelineContainer');
+        document.getElementById('timelineCount').textContent = allEvents.length;
+
+        if (allEvents.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted py-4">No events in this session.</div>';
+            return;
+        }
+
+        var html = '';
+        allEvents.forEach(function(evt, i) {
+            var cls = 'timeline-event';
+            if (evt.event_type === 'signal') {
+                cls += evt.signal_type === 'Buy' ? ' signal-buy' : ' signal-short';
+            } else {
+                cls += ' trade';
+            }
+
+            var badge = '';
+            if (evt.event_type === 'signal') {
+                var bc = evt.signal_type === 'Buy' ? 'bg-success' : 'bg-danger';
+                badge = '<span class="badge ' + bc + ' event-badge">' + evt.signal_type + '</span>';
+            } else {
+                var tc = evt.trade_status === 'filled' ? 'bg-primary' : 'bg-warning text-dark';
+                badge = '<span class="badge ' + tc + ' event-badge">Trade: ' + evt.trade_status + '</span>';
+            }
+
+            var matchIcon = '';
+            if (evt.would_signal !== null) {
+                var actual = evt.event_type === 'signal' && evt.signal_type;
+                var isMatch = !!actual === evt.would_signal;
+                matchIcon = isMatch
+                    ? ' <i class="bi bi-check-circle-fill text-success match-icon" title="Match"></i>'
+                    : ' <i class="bi bi-x-circle-fill text-danger match-icon" title="Mismatch"></i>';
+            }
+
+            var ts = evt.timestamp ? evt.timestamp.substring(11, 19) : '';
+            var price = evt.price ? evt.price.toFixed(2) : '';
+
+            html += '<div class="' + cls + '" data-idx="' + i + '" onclick="window._replayJump(' + i + ')">' +
+                '<div class="d-flex justify-content-between">' +
+                '<span>' + badge + matchIcon + '</span>' +
+                '<span class="text-mono">' + price + '</span>' +
+                '</div>' +
+                '<div class="event-time">#' + (i + 1) + ' &mdash; ' + ts + '</div>' +
+                '</div>';
+        });
+        container.innerHTML = html;
+    }
+
+    window._replayJump = function(idx) {
+        jumpTo(idx);
+    };
+
+    function highlightTimeline() {
+        var items = document.querySelectorAll('.timeline-event');
+        items.forEach(function(el) { el.classList.remove('active'); });
+        if (currentIdx >= 0 && currentIdx < items.length) {
+            items[currentIdx].classList.add('active');
+            items[currentIdx].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    function updateProgress() {
+        var total = allEvents.length;
+        var pct = total > 0 ? ((currentIdx + 1) / total * 100) : 0;
+        document.getElementById('replayProgress').style.width = pct.toFixed(1) + '%';
+        document.getElementById('progressText').textContent = (currentIdx + 1) + ' / ' + total + ' events';
+    }
+
+    function renderCurrentEvent() {
+        var body = document.getElementById('currentEventBody');
+        var proxCard = document.getElementById('replayProximityCard');
+        var proxBody = document.getElementById('replayProximityBody');
+
+        if (currentIdx < 0 || currentIdx >= allEvents.length) {
+            body.innerHTML = '<div class="text-center text-muted py-4">Click <strong>Step</strong> to begin...</div>';
+            proxCard.style.display = 'none';
+            return;
+        }
+
+        var evt = allEvents[currentIdx];
+        var isSignal = evt.event_type === 'signal';
+        var isBuy = evt.signal_type === 'Buy';
+
+        // Badge
+        var badge = '';
+        if (isSignal) {
+            var bc = isBuy ? 'bg-success' : 'bg-danger';
+            badge = '<span class="badge ' + bc + ' fs-6">' + evt.signal_type + ' Signal</span>';
+        } else {
+            var tc = evt.trade_status === 'filled' ? 'bg-primary' : 'bg-warning text-dark';
+            badge = '<span class="badge ' + tc + ' fs-6">Trade: ' + evt.trade_status + '</span>';
+        }
+
+        // Match indicator
+        var matchHtml = '';
+        if (evt.would_signal !== null) {
+            var actual = isSignal && evt.signal_type;
+            var isMatch = !!actual === evt.would_signal;
+            if (isMatch) {
+                matchHtml = '<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Conditions Match</span>';
+            } else {
+                matchHtml = '<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Conditions Mismatch</span>';
+            }
+        }
+
+        var html = '<div class="d-flex justify-content-between align-items-start mb-3">' +
+            '<div>' + badge + ' ' + matchHtml + '</div>' +
+            '<small class="text-muted">' + (evt.timestamp || '') + '</small>' +
+            '</div>';
+
+        // Details
+        html += '<div class="row g-2 mb-3">';
+        html += '<div class="col-4"><small class="text-muted d-block">Symbol</small><strong>' + (evt.symbol || '-') + '</strong></div>';
+        html += '<div class="col-4"><small class="text-muted d-block">Price</small><strong class="text-mono">' + (evt.price ? evt.price.toFixed(2) : '-') + '</strong></div>';
+
+        if (evt.event_type === 'trade') {
+            html += '<div class="col-4"><small class="text-muted d-block">Fill Price</small><strong class="text-mono">' + (evt.fill_price ? evt.fill_price.toFixed(2) : '-') + '</strong></div>';
+            if (evt.pnl !== null) {
+                var pnlClass = evt.pnl >= 0 ? 'text-success' : 'text-danger';
+                html += '<div class="col-4"><small class="text-muted d-block">P&L</small><strong class="' + pnlClass + '">$' + evt.pnl.toFixed(2) + '</strong></div>';
+            }
+        }
+
+        if (evt.was_deduped) {
+            html += '<div class="col-4"><small class="text-muted d-block">Status</small><span class="badge bg-secondary">Deduped</span></div>';
+        }
+        if (evt.was_traded && isSignal) {
+            html += '<div class="col-4"><small class="text-muted d-block">Traded</small><span class="badge bg-info">Yes</span></div>';
+        }
+        html += '</div>';
+
+        // Indicators
+        var indKeys = Object.keys(evt.indicators || {});
+        if (indKeys.length > 0) {
+            html += '<h6 class="mt-3 mb-2">Indicator Snapshot</h6>';
+            html += '<div class="row g-1">';
+            indKeys.forEach(function(k) {
+                var v = evt.indicators[k];
+                var formatted = typeof v === 'number' ? v.toFixed(4) : v;
+                html += '<div class="col-md-6"><div class="indicator-item"><span class="ind-name">' + k + '</span><span class="ind-value">' + formatted + '</span></div></div>';
+            });
+            html += '</div>';
+        }
+
+        body.innerHTML = html;
+
+        // Proximity
+        if (evt.proximity && evt.proximity.length > 0) {
+            proxCard.style.display = '';
+            var proxHtml = '<div class="row g-3"><div class="col-md-6"><h6 class="text-success mb-2">Buy Conditions</h6>';
+            var buyProx = evt.proximity.filter(function(p) { return p.signal === 'Buy'; });
+            var shortProx = evt.proximity.filter(function(p) { return p.signal === 'Short'; });
+
+            buyProx.forEach(function(p) {
+                proxHtml += renderProxItem(p);
+            });
+            if (buyProx.length === 0) proxHtml += '<small class="text-muted">None</small>';
+
+            proxHtml += '</div><div class="col-md-6"><h6 class="text-danger mb-2">Short Conditions</h6>';
+            shortProx.forEach(function(p) {
+                proxHtml += renderProxItem(p);
+            });
+            if (shortProx.length === 0) proxHtml += '<small class="text-muted">None</small>';
+            proxHtml += '</div></div>';
+            proxBody.innerHTML = proxHtml;
+        } else {
+            proxCard.style.display = 'none';
+        }
+    }
+
+    function renderProxItem(p) {
+        var pct = Math.min(p.proximity_pct || 0, 100);
+        var barColor = p.met ? 'bg-success' : (pct > 80 ? 'bg-warning' : 'bg-secondary');
+        var icon = p.met ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-circle text-muted"></i>';
+        return '<div class="mb-2">' +
+            '<div class="d-flex justify-content-between align-items-center mb-1">' +
+            '<small>' + icon + ' <strong>' + p.indicator + '</strong> ' + p.operator + ' ' + p.threshold + '</small>' +
+            '<small class="text-mono">' + p.current_value + '</small>' +
+            '</div>' +
+            '<div class="progress" style="height: 4px;">' +
+            '<div class="progress-bar ' + barColor + '" style="width: ' + pct + '%;"></div>' +
+            '</div></div>';
+    }
+})();
+</script>
+{% endblock %}

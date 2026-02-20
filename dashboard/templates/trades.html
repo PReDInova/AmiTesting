@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Trade Journal{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <h2>Trade Journal</h2>
+    <p class="text-muted">Persistent record of all live trades with full context.</p>
+
+    <!-- Filters -->
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label class="form-label">Session</label>
+            <select id="filter-session" class="form-select form-select-sm" onchange="filterTrades()">
+                <option value="">All Sessions</option>
+                {% for s in sessions %}
+                <option value="{{ s.id }}">{{ s.started_at[:16] }} - {{ s.strategy_id[:8] if s.strategy_id else 'Unknown' }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Symbol</label>
+            <input type="text" id="filter-symbol" class="form-control form-control-sm" placeholder="e.g. NQ" onkeyup="filterTrades()">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Signal Type</label>
+            <select id="filter-signal" class="form-select form-select-sm" onchange="filterTrades()">
+                <option value="">All</option>
+                <option value="Buy">Buy</option>
+                <option value="Sell">Sell</option>
+                <option value="Short">Short</option>
+                <option value="Cover">Cover</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Status</label>
+            <select id="filter-status" class="form-select form-select-sm" onchange="filterTrades()">
+                <option value="">All</option>
+                <option value="filled">Filled</option>
+                <option value="rejected">Rejected</option>
+                <option value="timeout">Timeout</option>
+                <option value="cancelled">Cancelled</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">&nbsp;</label>
+            <div>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadPnLAttribution()">P&amp;L Attribution</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="exportCSV()">Export CSV</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="row mb-3" id="summary-cards">
+        <div class="col-md-2">
+            <div class="card text-center">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Total Trades</div>
+                    <div class="h5 mb-0" id="total-trades">{{ trades|length }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-center">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Filled</div>
+                    <div class="h5 mb-0 text-success" id="filled-count">{{ trades|selectattr('status', 'equalto', 'filled')|list|length }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-2">
+            <div class="card text-center">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Rejected/Failed</div>
+                    <div class="h5 mb-0 text-danger" id="failed-count">{{ trades|rejectattr('status', 'equalto', 'filled')|list|length }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Total P&amp;L</div>
+                    <div class="h5 mb-0" id="total-pnl">
+                        {% set total_pnl = trades|selectattr('pnl')|map(attribute='pnl')|sum %}
+                        <span class="{{ 'text-success' if total_pnl >= 0 else 'text-danger' }}">
+                            ${{ "%.2f"|format(total_pnl) }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body p-2">
+                    <div class="text-muted small">Win Rate</div>
+                    <div class="h5 mb-0" id="win-rate">
+                        {% set wins = trades|selectattr('pnl')|selectattr('pnl', 'gt', 0)|list|length %}
+                        {% set total_with_pnl = trades|selectattr('pnl')|list|length %}
+                        {{ "%.1f%%"|format(wins / total_with_pnl * 100) if total_with_pnl > 0 else "N/A" }}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trade Table -->
+    <div class="table-responsive">
+        <table class="table table-sm table-striped table-hover" id="trades-table">
+            <thead class="table-dark">
+                <tr>
+                    <th>Time</th>
+                    <th>Strategy</th>
+                    <th>Signal</th>
+                    <th>Symbol</th>
+                    <th>Size</th>
+                    <th>Signal Price</th>
+                    <th>Fill Price</th>
+                    <th>Status</th>
+                    <th>P&amp;L</th>
+                    <th>Elapsed</th>
+                    <th>Indicators</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in trades %}
+                <tr class="trade-row"
+                    data-session="{{ t.session_id }}"
+                    data-symbol="{{ t.symbol }}"
+                    data-signal="{{ t.signal_type }}"
+                    data-status="{{ t.status }}">
+                    <td class="small">{{ t.executed_at[:19] if t.executed_at else t.created_at[:19] }}</td>
+                    <td>{{ t.strategy_name }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if t.signal_type in ('Buy', 'Cover') else 'bg-danger' }}">
+                            {{ t.signal_type }}
+                        </span>
+                    </td>
+                    <td>{{ t.symbol }}</td>
+                    <td>{{ t.size }}</td>
+                    <td>{{ "%.2f"|format(t.signal_price) if t.signal_price else '-' }}</td>
+                    <td>{{ "%.2f"|format(t.fill_price) if t.fill_price else '-' }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if t.status == 'filled' else 'bg-warning' if t.status == 'pending' else 'bg-danger' }}">
+                            {{ t.status }}
+                        </span>
+                    </td>
+                    <td class="{{ 'text-success' if t.pnl and t.pnl > 0 else 'text-danger' if t.pnl and t.pnl < 0 else '' }}">
+                        {{ "$%.2f"|format(t.pnl) if t.pnl else '-' }}
+                    </td>
+                    <td class="small">{{ "%.1fs"|format(t.elapsed_seconds) if t.elapsed_seconds else '-' }}</td>
+                    <td>
+                        {% if t.indicators %}
+                        <button class="btn btn-xs btn-outline-info" onclick="showIndicators('{{ t.id }}')">View</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- P&L Attribution Modal -->
+    <div class="modal fade" id="pnlModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">P&amp;L Attribution</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <select id="pnl-group" class="form-select form-select-sm" onchange="loadPnLAttribution()">
+                                <option value="strategy">By Strategy</option>
+                                <option value="symbol">By Symbol</option>
+                                <option value="hour">By Hour</option>
+                                <option value="weekday">By Weekday</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <select id="pnl-days" class="form-select form-select-sm" onchange="loadPnLAttribution()">
+                                <option value="7">Last 7 days</option>
+                                <option value="30" selected>Last 30 days</option>
+                                <option value="90">Last 90 days</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="pnl-table-container">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Indicator Detail Modal -->
+    <div class="modal fade" id="indicatorModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Indicator Values at Signal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="indicator-detail">Loading...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function filterTrades() {
+    const session = document.getElementById('filter-session').value;
+    const symbol = document.getElementById('filter-symbol').value.toLowerCase();
+    const signal = document.getElementById('filter-signal').value;
+    const status = document.getElementById('filter-status').value;
+
+    document.querySelectorAll('.trade-row').forEach(row => {
+        let show = true;
+        if (session && row.dataset.session !== session) show = false;
+        if (symbol && !row.dataset.symbol.toLowerCase().includes(symbol)) show = false;
+        if (signal && row.dataset.signal !== signal) show = false;
+        if (status && row.dataset.status !== status) show = false;
+        row.style.display = show ? '' : 'none';
+    });
+}
+
+function loadPnLAttribution() {
+    const group = document.getElementById('pnl-group').value;
+    const days = document.getElementById('pnl-days').value;
+    const modal = new bootstrap.Modal(document.getElementById('pnlModal'));
+    modal.show();
+
+    fetch(`/api/trades/pnl?group_by=${group}&days=${days}`)
+        .then(r => r.json())
+        .then(data => {
+            let html = '<table class="table table-sm"><thead><tr><th>Group</th><th>Trades</th><th>Wins</th><th>Win Rate</th><th>Total P&L</th><th>Avg P&L</th></tr></thead><tbody>';
+            data.forEach(row => {
+                const wr = row.trade_count > 0 ? ((row.win_count / row.trade_count) * 100).toFixed(1) : 0;
+                const cls = row.total_pnl >= 0 ? 'text-success' : 'text-danger';
+                html += `<tr><td>${row.group_key || 'N/A'}</td><td>${row.trade_count}</td><td>${row.win_count}</td><td>${wr}%</td><td class="${cls}">$${row.total_pnl.toFixed(2)}</td><td>$${row.avg_pnl.toFixed(2)}</td></tr>`;
+            });
+            html += '</tbody></table>';
+            document.getElementById('pnl-table-container').innerHTML = html;
+        });
+}
+
+function showIndicators(tradeId) {
+    // Find the trade row and extract indicators from data
+    const modal = new bootstrap.Modal(document.getElementById('indicatorModal'));
+    modal.show();
+    fetch(`/api/trades?limit=500`)
+        .then(r => r.json())
+        .then(trades => {
+            const trade = trades.find(t => t.id === tradeId);
+            if (trade && trade.indicators) {
+                let html = '<table class="table table-sm"><thead><tr><th>Indicator</th><th>Value</th></tr></thead><tbody>';
+                Object.entries(trade.indicators).forEach(([k, v]) => {
+                    html += `<tr><td>${k}</td><td>${typeof v === 'number' ? v.toFixed(4) : v}</td></tr>`;
+                });
+                html += '</tbody></table>';
+                document.getElementById('indicator-detail').innerHTML = html;
+            } else {
+                document.getElementById('indicator-detail').innerHTML = '<p class="text-muted">No indicator data available.</p>';
+            }
+        });
+}
+
+function exportCSV() {
+    const rows = document.querySelectorAll('.trade-row:not([style*="display: none"])');
+    let csv = 'Time,Strategy,Signal,Symbol,Size,Signal Price,Fill Price,Status,P&L,Elapsed\n';
+    rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        const values = Array.from(cells).slice(0, -1).map(c => c.textContent.trim().replace(/,/g, ''));
+        csv += values.join(',') + '\n';
+    });
+    const blob = new Blob([csv], {type: 'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'trades.csv';
+    a.click();
+}
+</script>
+{% endblock %}

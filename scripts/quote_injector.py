@@ -46,11 +46,13 @@ class QuoteInjector:
     ----------
     com_dispatch_name : str
         COM ProgID (default: "Broker.Application").
-    db_path : str
-        Path to the AmiBroker database to load.
+    db_path : str or None
+        Path to the AmiBroker database to load.  If ``None``, the
+        injector uses whichever database AmiBroker already has open
+        (typical for live streaming).
     """
 
-    def __init__(self, com_dispatch_name: str, db_path: str):
+    def __init__(self, com_dispatch_name: str, db_path: str = None):
         self.com_dispatch_name = com_dispatch_name
         self.db_path = db_path
         self.ab = None
@@ -58,7 +60,10 @@ class QuoteInjector:
         self._injected_timestamps: set[float] = set()
 
     def connect(self) -> bool:
-        """Attach to a running AmiBroker instance and load the database.
+        """Attach to a running AmiBroker instance.
+
+        If ``db_path`` was provided, loads that database.  Otherwise
+        uses whichever database AmiBroker already has open.
 
         Returns True on success, False on failure.
         """
@@ -71,8 +76,11 @@ class QuoteInjector:
                         self.com_dispatch_name)
             self.ab = win32com.client.Dispatch(self.com_dispatch_name)
 
-            logger.info("Loading database: %s", self.db_path)
-            self.ab.LoadDatabase(self.db_path)
+            if self.db_path:
+                logger.info("Loading database: %s", self.db_path)
+                self.ab.LoadDatabase(self.db_path)
+            else:
+                logger.info("Using AmiBroker's currently-loaded database.")
 
             logger.info("QuoteInjector connected to AmiBroker.")
             return True

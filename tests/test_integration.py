@@ -60,11 +60,11 @@ class TestApxBuilderPipeline:
         assert root.tag == "AmiBroker-Analysis"
         assert root.attrib.get("CompactMode") == "0"
 
-        # FormulaContent is intentionally cleared so AmiBroker reads from
-        # FormulaPath without showing a "formula is different" dialog.
+        # FormulaContent is populated by default to match FormulaPath,
+        # preventing the "formula is different" dialog in AmiBroker.
         formula_elem = root.find(".//FormulaContent")
         assert formula_elem is not None
-        assert formula_elem.text is None or formula_elem.text.strip() == ""
+        assert formula_elem.text is not None and len(formula_elem.text.strip()) > 0
 
         # BacktestSettings should still be present
         backtest_elem = root.find(".//BacktestSettings")
@@ -227,14 +227,14 @@ class TestListSymbols:
         stock_b = MagicMock()
         stock_b.Ticker = "NQ"
         stock_a = MagicMock()
-        stock_a.Ticker = "GCZ5"
+        stock_a.Ticker = "GC"
 
         mock_app.Stocks.Count = 3
         mock_app.Stocks.side_effect = lambda i: [stock_a, stock_b, stock_c][i]
 
         result = list_symbols(db_path=r"C:\MockDB")
 
-        assert result == ["GCZ5", "NQ", "ZB"]
+        assert result == ["GC", "NQ", "ZB"]
         mock_app.LoadDatabase.assert_called_once_with(r"C:\MockDB")
 
     @patch("scripts.ole_backtest.pythoncom")

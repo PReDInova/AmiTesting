@@ -35,7 +35,7 @@ from config.settings import (
     AMIBROKER_DB_PATH,
     APX_DIR,
     APX_TEMPLATE,
-    GCZ25_SYMBOL,
+    DEFAULT_SYMBOL,
 )
 from scripts.apx_builder import build_apx
 from scripts.signal_evaluator import (
@@ -1265,7 +1265,7 @@ def compute_signals_via_exploration(
     param_values : dict, optional
         Current slider values keyed by display name.
     symbol : str, optional
-        Ticker symbol (defaults to GCZ25_SYMBOL).
+        Ticker symbol (defaults to DEFAULT_SYMBOL).
     interval : int
         Chart interval in seconds (used to set APX periodicity).
 
@@ -1278,7 +1278,7 @@ def compute_signals_via_exploration(
     """
     start_time = time.time()
     param_values = param_values or {}
-    symbol = symbol or GCZ25_SYMBOL
+    symbol = symbol or DEFAULT_SYMBOL
 
     # Generate the Exploration AFL with symbol filter baked into Filter expr.
     # The AFL Filter uses Name() == "symbol" so AmiBroker only processes

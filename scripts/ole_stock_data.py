@@ -550,8 +550,8 @@ def get_dataset_date_range(symbol: str = None, refresh: bool = False) -> dict:
         ``{"first_date": "YYYY-MM-DD", "last_date": "YYYY-MM-DD",
           "error": None, "stale": False}``
     """
-    from config.settings import GCZ25_SYMBOL
-    symbol = symbol or GCZ25_SYMBOL
+    from config.settings import DEFAULT_SYMBOL
+    symbol = symbol or DEFAULT_SYMBOL
 
     # Try cache first
     if not refresh and _DATE_RANGE_CACHE_PATH.exists():

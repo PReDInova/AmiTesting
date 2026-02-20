@@ -21,7 +21,7 @@ from config.settings import (
     LOGS_DIR,
     AMIBROKER_DB_PATH,
     AMIBROKER_EXE,
-    GCZ25_SYMBOL,
+    DEFAULT_SYMBOL,
     AFL_STRATEGY_FILE,
     APX_TEMPLATE,
     BACKTEST_SETTINGS,
@@ -92,8 +92,8 @@ class TestAmiBrokerIdentifiers:
         assert AMIBROKER_EXE == "Broker.Application"
 
     def test_symbol(self):
-        """GCZ25_SYMBOL must be 'GCZ25'."""
-        assert GCZ25_SYMBOL == "GCZ25"
+        """DEFAULT_SYMBOL must be 'GC'."""
+        assert DEFAULT_SYMBOL == "GC"
 
 
 # ---------------------------------------------------------------------------

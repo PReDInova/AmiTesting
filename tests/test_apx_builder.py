@@ -13,8 +13,8 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from scripts.apx_builder import build_apx
-from config.settings import AFL_STRATEGY_FILE, APX_TEMPLATE, GCZ25_SYMBOL
+from scripts.apx_builder import build_apx, _compute_date_range
+from config.settings import AFL_STRATEGY_FILE, APX_TEMPLATE, DEFAULT_SYMBOL
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ class TestBuildApxSymbol:
         assert b"<Symbol>NQ</Symbol>" in content
 
     def test_build_apx_default_symbol(self, tmp_path):
-        """When symbol is not passed, GCZ25_SYMBOL is used."""
+        """When symbol is not passed, DEFAULT_SYMBOL is used."""
         afl_file = tmp_path / "test.afl"
         afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
 
@@ -231,4 +231,154 @@ class TestBuildApxSymbol:
         )
 
         content = output.read_bytes()
-        assert f"<Symbol>{GCZ25_SYMBOL}</Symbol>".encode() in content
+        assert f"<Symbol>{DEFAULT_SYMBOL}</Symbol>".encode() in content
+
+
+# ---------------------------------------------------------------------------
+# Date range tests
+# ---------------------------------------------------------------------------
+
+class TestBuildApxDateRange:
+    """Date range is computed by _compute_date_range and enforced via AFL
+    filter (injected by run.py).  The APX RangeType stays at 0 ('All quotes')
+    because AmiBroker's OLE interface ignores APX date values."""
+
+    @staticmethod
+    def _make_template(tmp_path):
+        """Create a minimal APX template with all date-range XML tags."""
+        template = tmp_path / "template.apx"
+        template.write_bytes(
+            b'<?xml version="1.0" encoding="iso-8859-1"?>\r\n'
+            b'<AmiBroker-Analysis CompactMode="0">\r\n'
+            b'<General>\r\n'
+            b'<FormulaPath></FormulaPath>\r\n'
+            b'<FormulaContent></FormulaContent>\r\n'
+            b'<Symbol></Symbol>\r\n'
+            b'<RangeType>0</RangeType>\r\n'
+            b'<FromDate>2025-01-01 00:00:00</FromDate>\r\n'
+            b'<ToDate>2025-12-31</ToDate>\r\n'
+            b'</General>\r\n'
+            b'<BacktestSettings>\r\n'
+            b'<InitialEquity>100000</InitialEquity>\r\n'
+            b'<RangeType>0</RangeType>\r\n'
+            b'<RangeFromDate>2025-01-01 00:00:00</RangeFromDate>\r\n'
+            b'<RangeToDate>2025-12-31</RangeToDate>\r\n'
+            b'<BacktestRangeType>0</BacktestRangeType>\r\n'
+            b'<BacktestRangeFromDate>2025-01-01 00:00:00</BacktestRangeFromDate>\r\n'
+            b'<BacktestRangeToDate>2025-12-31</BacktestRangeToDate>\r\n'
+            b'</BacktestSettings>\r\n'
+            b'</AmiBroker-Analysis>\r\n'
+        )
+        return template
+
+    def test_range_type_stays_0_when_date_range_provided(self, tmp_path):
+        """RangeType must remain 0 ('All quotes') even when a date range is
+        specified — the date window is enforced via AFL, not APX settings."""
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+        template = self._make_template(tmp_path)
+        output = tmp_path / "output.apx"
+
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(template),
+            date_range="1m@0m",
+            dataset_start="2025-06-01",
+            dataset_end="2025-12-31",
+        )
+
+        content = output.read_bytes()
+        # RangeType must remain 0 in all locations
+        assert content.count(b"<RangeType>0</RangeType>") == 2
+        assert b"<BacktestRangeType>0</BacktestRangeType>" in content
+
+    def test_date_tags_unchanged_when_date_range_provided(self, tmp_path):
+        """APX date tags (FromDate, ToDate, etc.) must stay at their template
+        defaults — the APX builder no longer modifies them."""
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+        template = self._make_template(tmp_path)
+        output = tmp_path / "output.apx"
+
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(template),
+            date_range="1m@0m",
+            dataset_start="2025-06-01",
+            dataset_end="2025-12-31",
+        )
+
+        content = output.read_bytes()
+        # Template dates must be preserved unchanged
+        assert b"<FromDate>2025-01-01 00:00:00</FromDate>" in content
+        assert b"<ToDate>2025-12-31</ToDate>" in content
+        assert b"<RangeFromDate>2025-01-01 00:00:00</RangeFromDate>" in content
+        assert b"<RangeToDate>2025-12-31</RangeToDate>" in content
+
+    def test_range_type_unchanged_when_no_date_range(self, tmp_path):
+        """When date_range is not provided, RangeType stays at 0."""
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+        template = self._make_template(tmp_path)
+        output = tmp_path / "output.apx"
+
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(template),
+        )
+
+        content = output.read_bytes()
+        assert content.count(b"<RangeType>0</RangeType>") == 2
+        assert b"<BacktestRangeType>0</BacktestRangeType>" in content
+
+    def test_compute_date_range_simple_1m(self):
+        """Simple '1m' measures 1 month back from dataset end."""
+        from_d, to_d = _compute_date_range("1m", "2025-06-01", "2025-12-31")
+        assert from_d == "2025-11-30"
+        assert to_d == "2025-12-31"
+
+    def test_compute_date_range_compound_1m_at_3m(self):
+        """'1m@3m' = 1 month starting 3 months after dataset start."""
+        from_d, to_d = _compute_date_range("1m@3m", "2025-06-01", "2025-12-31")
+        assert from_d == "2025-09-01"
+        assert to_d == "2025-10-01"
+
+    def test_different_date_ranges_produce_different_windows(self):
+        """Different date_range codes must produce different date windows
+        via _compute_date_range so that AFL filters cover different periods."""
+        results = {}
+        for code in ["1m@0m", "1m@3m", "3m@0m", "1m"]:
+            from_d, to_d = _compute_date_range(code, "2025-01-01", "2025-12-31")
+            results[code] = (from_d, to_d)
+
+        # All four date ranges should produce DIFFERENT (from, to) pairs
+        unique_windows = set(results.values())
+        assert len(unique_windows) == 4, (
+            f"Expected 4 unique date windows but got {len(unique_windows)}: {results}"
+        )
+
+    def test_real_template_range_type_stays_0(self, tmp_path):
+        """Verify that the real base.apx template keeps RangeType=0 even
+        when a date range is provided — dates are enforced via AFL filter."""
+        afl_file = tmp_path / "test.afl"
+        afl_file.write_text("Buy = 1; Sell = 0;", encoding="utf-8")
+        output = tmp_path / "real_dates.apx"
+
+        build_apx(
+            str(afl_file),
+            str(output),
+            str(APX_TEMPLATE),
+            date_range="1m@0m",
+            dataset_start="2025-06-01",
+            dataset_end="2025-12-31",
+        )
+
+        content = output.read_bytes()
+        # RangeType must stay 0 in all locations
+        assert b"<RangeType>2</RangeType>" not in content
+        assert b"<BacktestRangeType>2</BacktestRangeType>" not in content
+        assert content.count(b"<RangeType>0</RangeType>") == 2
+        assert b"<BacktestRangeType>0</BacktestRangeType>" in content

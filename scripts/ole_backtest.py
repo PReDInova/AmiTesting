@@ -142,6 +142,7 @@ class OLEBacktester:
         Returns True on success, False on failure.
         """
         try:
+            pythoncom.CoInitialize()
             exe_path = AMIBROKER_EXE_PATH
             logger.info("Launching AmiBroker from: %s", exe_path)
             subprocess.Popen([exe_path])
@@ -497,6 +498,7 @@ class OLEBacktester:
                 logger.warning("Error while quitting AmiBroker: %s", exc)
             finally:
                 self.ab = None
+                pythoncom.CoUninitialize()
 
     # ------------------------------------------------------------------
     # Full orchestration

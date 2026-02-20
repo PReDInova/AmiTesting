@@ -1,0 +1,6 @@
+<script>
+    window.LIVE_CONFIG = {
+        initialState: {{ live_state | tojson }}
+    };
+</script>
+<script src="{{ url_for('static', filename='js/live_dashboard.js') }}"></script>

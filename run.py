@@ -33,7 +33,7 @@ from config.settings import (
     APX_OUTPUT,
     APX_TEMPLATE,
     RESULTS_DIR,
-    GCZ25_SYMBOL,
+    DEFAULT_SYMBOL,
 )
 from scripts.afl_validator import validate_afl_file, auto_fix_afl
 from scripts.afl_parser import calculate_optimization_combos, inject_progress_tracker
@@ -234,8 +234,8 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         AFL_STRATEGY_FILE.write_text(actual_afl, encoding="utf-8")
         logger.info("Wrote version AFL to %s (%d chars)", AFL_STRATEGY_FILE, len(actual_afl))
 
-    effective_symbol = symbol if symbol == "__ALL__" else (symbol or GCZ25_SYMBOL)
-    effective_date_range = date_range or "1y"
+    effective_symbol = symbol if symbol == "__ALL__" else (symbol or DEFAULT_SYMBOL)
+    effective_date_range = "" if date_range == "none" else (date_range or "1y")
 
     run_params = {"run_mode": run_mode or 2, "date_range": effective_date_range}
     run_id = create_run(
@@ -340,23 +340,92 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
                 periodicity = 5  # 1-minute native
                 logger.info("No TimeFrameSet + symbol filter — defaulting to Periodicity=5 (1-min)")
 
+        # --- Step 1c: Start AmiBroker early ----------------------------------
+        # AmiBroker must be running BEFORE we query dataset dates via COM.
+        # Starting it here (instead of inside run_full_test) ensures the
+        # date-range query succeeds and the APX is built with correct dates.
+        logger.info("Step 1c — Starting AmiBroker ...")
+        backtester = OLEBacktester()
+        if not backtester.connect():
+            error_msg = "Failed to connect to AmiBroker."
+            update_run(run_id, status="failed",
+                       metrics_json=json.dumps({"error": error_msg}),
+                       completed_at=datetime.now(timezone.utc).isoformat())
+            return 1
+        if not backtester.load_database():
+            backtester.disconnect()
+            error_msg = "Failed to load AmiBroker database."
+            update_run(run_id, status="failed",
+                       metrics_json=json.dumps({"error": error_msg}),
+                       completed_at=datetime.now(timezone.utc).isoformat())
+            return 1
+
         # --- Resolve dataset date range for APX date fields ---
+        # Query dates directly through the backtester's existing COM
+        # connection.  Creating a separate StockDataFetcher (with its own
+        # CoInitialize / CoUninitialize cycle) can corrupt the backtester's
+        # COM proxy, so we reuse backtester.ab instead.
         dataset_start = None
         dataset_end = None
         if effective_date_range:
             try:
-                from scripts.ole_stock_data import get_dataset_date_range
-                # Use the backtest symbol (or default) to query dates
-                query_symbol = effective_symbol if effective_symbol != "__ALL__" else GCZ25_SYMBOL
-                dr = get_dataset_date_range(symbol=query_symbol)
-                if dr.get("first_date") and dr.get("last_date"):
-                    dataset_start = dr["first_date"]
-                    dataset_end = dr["last_date"]
-                    logger.info("Dataset date range: %s to %s", dataset_start, dataset_end)
+                from scripts.ole_stock_data import _com_date_to_datetime
+                query_symbol = effective_symbol if effective_symbol != "__ALL__" else DEFAULT_SYMBOL
+                stock = backtester.ab.Stocks(query_symbol)
+                if stock is None:
+                    logger.warning("Symbol '%s' not found — scanning database for first available symbol", query_symbol)
+                    # Fall back to the first symbol in the database
+                    for i in range(backtester.ab.Stocks.Count):
+                        candidate = backtester.ab.Stocks(i)
+                        ticker = candidate.Ticker
+                        if ticker and not ticker.startswith("~~~"):
+                            stock = candidate
+                            logger.info("Using symbol '%s' for date range query", ticker)
+                            break
+                if stock is not None:
+                    quotations = stock.Quotations
+                    count = quotations.Count
+                    if count > 0:
+                        first_dt = _com_date_to_datetime(quotations(0).Date)
+                        last_dt = _com_date_to_datetime(quotations(count - 1).Date)
+                        dataset_start = first_dt.strftime("%Y-%m-%d")
+                        dataset_end = last_dt.strftime("%Y-%m-%d")
+                        logger.info("Dataset date range: %s to %s", dataset_start, dataset_end)
+                    else:
+                        logger.warning("No quotation data found for date range query")
                 else:
-                    logger.warning("Could not determine dataset dates: %s", dr.get("error"))
+                    logger.warning("No usable symbols found in database for date range query")
             except Exception as exc:
                 logger.warning("Failed to query dataset date range: %s", exc)
+
+        # --- Inject AFL-level date filter ------------------------------------
+        # AmiBroker's OLE interface does not reliably honour APX date range
+        # settings (RangeType, FromDate, ToDate).  To guarantee the backtest
+        # window is enforced, we append a DateNum()-based filter directly
+        # into the AFL formula.  This filters entry signals (Buy/Short) to
+        # the computed window; exit signals (Sell/Cover) are left untouched
+        # so open positions close naturally.
+        if dataset_start and dataset_end and effective_date_range:
+            from scripts.apx_builder import _compute_date_range
+            dr_from, dr_to = _compute_date_range(effective_date_range, dataset_start, dataset_end)
+            from datetime import datetime as _dt
+            from_dn = _dt.strptime(dr_from, "%Y-%m-%d")
+            to_dn = _dt.strptime(dr_to, "%Y-%m-%d")
+            from_datenum = (from_dn.year - 1900) * 10000 + from_dn.month * 100 + from_dn.day
+            to_datenum = (to_dn.year - 1900) * 10000 + to_dn.month * 100 + to_dn.day
+            date_filter_afl = (
+                f"\n// --- Date range filter (injected by pipeline) ---\n"
+                f"_pipelineDN = DateNum();\n"
+                f"_pipelineInRange = (_pipelineDN >= {from_datenum}) * (_pipelineDN <= {to_datenum});\n"
+                f"Buy   = Buy * _pipelineInRange;\n"
+                f"Short = Short * _pipelineInRange;\n"
+            )
+            afl_current = AFL_STRATEGY_FILE.read_text(encoding="utf-8")
+            AFL_STRATEGY_FILE.write_text(afl_current + date_filter_afl, encoding="utf-8")
+            logger.info(
+                "Injected AFL date filter: DateNum %d to %d (%s to %s)",
+                from_datenum, to_datenum, dr_from, dr_to,
+            )
 
         # Use a unique APX filename per run.  AmiBroker caches the formula
         # associated with an APX file across sessions; reusing the same
@@ -376,12 +445,12 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         )
         logger.info("APX file ready: %s", apx_path)
 
-        # --- Step 2: Run OLE backtest --------------------------------------
+        # --- Step 2: Run OLE backtest (already connected) ------------------
         logger.info("Step 2 — Running OLE backtest ...")
-        backtester = OLEBacktester()
-        result = backtester.run_full_test(
+        result = backtester.run_backtest(
             apx_path=str(run_apx_path), output_dir=str(output_dir), run_mode=run_mode
         )
+        backtester.disconnect()
         logger.info("Backtest completed.")
 
         # --- Step 2a: Run indicator exploration & merge custom columns ----------
@@ -568,6 +637,22 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
                         except Exception as exc:
                             logger.warning("Failed to store optimization combos in SQL: %s", exc)
                     else:
+                        # Check for symbol mismatch between requested and actual trades
+                        sym_col = None
+                        for col in df.columns:
+                            if col.strip().lower() == "symbol":
+                                sym_col = col
+                                break
+                        if sym_col is not None and effective_symbol and effective_symbol != "__ALL__":
+                            csv_symbols = df[sym_col].astype(str).str.strip().str.upper().unique().tolist()
+                            target_upper = effective_symbol.strip().upper()
+                            if csv_symbols and target_upper not in csv_symbols:
+                                logger.warning(
+                                    "SYMBOL MISMATCH: requested '%s' but CSV contains trades for: %s. "
+                                    "AmiBroker may not have data for '%s'.",
+                                    effective_symbol, csv_symbols, effective_symbol,
+                                )
+
                         profit_col = None
                         for col in df.columns:
                             if "profit" in col.lower() and "%" not in col.lower():
@@ -651,6 +736,13 @@ def main(strategy_id: str = None, version_id: str = None, run_mode: int = None, 
         return 1
 
     finally:
+        # Ensure AmiBroker is disconnected even if an exception occurred
+        # after connect() but before the normal disconnect() call.
+        try:
+            if backtester is not None and backtester.ab is not None:
+                backtester.disconnect()
+        except (NameError, Exception):
+            pass
         # Clean up per-run APX file (the snapshot AFL is kept for reference).
         try:
             run_apx_path.unlink(missing_ok=True)

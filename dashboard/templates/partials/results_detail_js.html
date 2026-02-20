@@ -1,0 +1,26 @@
+<script>
+    window.RESULTS_CONFIG = {
+        symbolRunsMap: {{ (symbol_runs or {}) | tojson }},
+        currentRunSymbol: {{ ((run.symbol if run else '') or (default_symbol if default_symbol is defined else '')) | tojson }},
+        {% if is_optimization is defined and is_optimization and parsed and parsed.trades %}
+        isOptimization: true,
+        optProfits: [
+            {% for combo in parsed.trades %}
+            {% if parsed.metrics.get("net_profit_column", "") %}
+            {{ combo[parsed.metrics.get("net_profit_column", "Net Profit")]|default(0)|float }},
+            {% endif %}
+            {% endfor %}
+        ],
+        netProfitCol: {{ (parsed.metrics.get("net_profit_column", "")|tojson) }},
+        indicatorConfigs: [],
+        equityCurveUrl: '',
+        {% else %}
+        isOptimization: false,
+        optProfits: [],
+        netProfitCol: '',
+        equityCurveUrl: {% if run %}'/api/run/{{ run.id }}/equity-curve{% if selected_symbol %}?symbol={{ selected_symbol }}{% endif %}'{% else %}'/api/results/{{ filename }}/equity-curve'{% endif %},
+        indicatorConfigs: {{ indicator_configs | tojson }},
+        {% endif %}
+    };
+</script>
+<script src="{{ url_for('static', filename='js/results_detail.js') }}"></script>

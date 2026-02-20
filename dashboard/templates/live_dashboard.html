@@ -1,0 +1,546 @@
+{% extends "base.html" %}
+{% block title %}Live Signal Scanner - AmiTesting{% endblock %}
+
+{% block extra_head %}
+<style>
+    .status-dot {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+    .status-dot.running { background: #198754; box-shadow: 0 0 8px rgba(25,135,84,0.5); }
+    .status-dot.connecting { background: #ffc107; box-shadow: 0 0 8px rgba(255,193,7,0.5); }
+    .status-dot.stopped { background: #6c757d; }
+    .status-dot.error { background: #dc3545; box-shadow: 0 0 8px rgba(220,53,69,0.5); }
+
+    .live-metric {
+        text-align: center;
+        padding: 1.25rem;
+    }
+    .live-metric .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .live-metric .metric-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6c757d;
+        margin-top: 0.25rem;
+    }
+
+    .alert-row-buy { border-left: 3px solid #198754; }
+    .alert-row-short { border-left: 3px solid #dc3545; }
+
+    .feed-bar {
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-size: 0.9rem;
+    }
+    .feed-bar.connected { background: rgba(25,135,84,0.1); border: 1px solid rgba(25,135,84,0.3); }
+    .feed-bar.disconnected { background: rgba(220,53,69,0.1); border: 1px solid rgba(220,53,69,0.3); }
+
+    #setupSection, #runningSection, #stoppedSection { display: none; }
+
+    .confirm-detail { margin-bottom: 0.25rem; }
+    .confirm-detail .label { font-weight: 600; min-width: 120px; display: inline-block; }
+
+    .indicator-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.35rem 0.75rem;
+        border-radius: 4px;
+        background: #f8f9fa;
+        font-size: 0.875rem;
+    }
+    .indicator-item .ind-name {
+        color: #6c757d;
+        font-weight: 500;
+    }
+    .indicator-item .ind-value {
+        font-family: 'SFMono-Regular', Consolas, monospace;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <h4 class="mb-0">
+        <i class="bi bi-broadcast me-2 text-primary"></i>Live Signal Scanner
+        <span id="statusDot" class="status-dot stopped"></span>
+        <span id="statusText" class="text-muted fs-6">Idle</span>
+    </h4>
+</div>
+
+<!-- ── SETUP SECTION ────────────────────────────────────── -->
+<div id="setupSection">
+    <div class="row g-4">
+        <!-- Strategy & Account Selection -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-gear me-2"></i>Session Configuration
+                </div>
+                <div class="card-body">
+                    <!-- Strategy -->
+                    <div class="mb-3">
+                        <label for="strategySelect" class="form-label fw-semibold">Strategy</label>
+                        <select class="form-select" id="strategySelect">
+                            <option value="">-- Select Strategy --</option>
+                            {% for s in strategies %}
+                            <option value="{{ s.id }}" data-name="{{ s.name }}">
+                                {{ s.name }}{% if s.summary %} - {{ s.summary }}{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Account -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">ProjectX Account</label>
+                        <div class="input-group">
+                            <select class="form-select" id="accountSelect" disabled>
+                                <option value="">-- Load accounts first --</option>
+                            </select>
+                            <button class="btn btn-outline-primary" type="button" id="btnLoadAccounts">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Load
+                            </button>
+                        </div>
+                        <div id="accountError" class="text-danger small mt-1" style="display:none;"></div>
+                        <div id="accountLoading" class="text-muted small mt-1" style="display:none;">
+                            <span class="spinner-border spinner-border-sm me-1"></span>Connecting to ProjectX...
+                        </div>
+                    </div>
+
+                    <!-- Symbols -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label for="pxSymbol" class="form-label fw-semibold">ProjectX Symbol</label>
+                            <input type="text" class="form-control" id="pxSymbol" value="NQH6">
+                        </div>
+                        <div class="col-6">
+                            <label for="amiSymbol" class="form-label fw-semibold">AmiBroker Symbol</label>
+                            <input type="text" class="form-control" id="amiSymbol" value="NQ">
+                        </div>
+                    </div>
+
+                    <!-- Bar Interval -->
+                    <div class="mb-3">
+                        <label for="barInterval" class="form-label fw-semibold">Bar Interval (min)</label>
+                        <input type="number" class="form-control" id="barInterval" value="1" min="1" max="60">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Channels & Launch -->
+        <div class="col-lg-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-bell me-2"></i>Alert Channels
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="alertLog" checked>
+                            <label class="form-check-label" for="alertLog">
+                                <i class="bi bi-journal-text me-1"></i>Log (Python logger)
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="alertDesktop">
+                            <label class="form-check-label" for="alertDesktop">
+                                <i class="bi bi-window-desktop me-1"></i>Desktop Notification
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="alertSound">
+                            <label class="form-check-label" for="alertSound">
+                                <i class="bi bi-volume-up me-1"></i>Sound Alert
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="alertWebhook">
+                            <label class="form-check-label" for="alertWebhook">
+                                <i class="bi bi-send me-1"></i>Webhook POST
+                            </label>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Trade Execution Toggle -->
+                    <div class="mb-3">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="tradeEnabled">
+                            <label class="form-check-label fw-semibold" for="tradeEnabled">
+                                <i class="bi bi-lightning-charge me-1"></i>Enable Trade Execution
+                            </label>
+                        </div>
+                        <div id="tradeSettings" style="display: none;">
+                            <div class="callout-amber mb-2">
+                                <small><strong>Warning:</strong> Trades will be placed as MARKET ORDERS into your TopStep account.</small>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <label for="tradeSize" class="form-label small">Contracts</label>
+                                    <input type="number" class="form-control form-control-sm" id="tradeSize" value="1" min="1" max="10">
+                                </div>
+                                <div class="col-6">
+                                    <label for="tradeTimeout" class="form-label small">Fill Timeout (sec)</label>
+                                    <input type="number" class="form-control form-control-sm" id="tradeTimeout" value="30" min="5" max="120">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="callout-blue mb-3">
+                        <small>
+                            <strong>How it works:</strong> ProjectX streams live market data into AmiBroker via WebSocket.
+                            Your AFL strategy runs as an Exploration scan automatically on each new bar.
+                            When Buy/Sell/Short/Cover signals fire, alerts are dispatched through the selected channels.
+                            If trade execution is enabled, market orders are placed automatically.
+                        </small>
+                    </div>
+
+                    <button class="btn btn-success btn-lg w-100" id="btnLaunch" disabled>
+                        <i class="bi bi-play-fill me-2"></i>Go Live
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── CONFIRMATION MODAL ──────────────────────────────── -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title"><i class="bi bi-broadcast me-2"></i>Confirm Live Session</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="callout-amber mb-3">
+                    <small><strong>Warning:</strong> This will start streaming live market data and scanning for signals. Make sure AmiBroker is running.</small>
+                </div>
+                <div id="confirmDetails">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="btnConfirmLaunch">
+                    <i class="bi bi-play-fill me-1"></i>Start Live Session
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── RUNNING SECTION ─────────────────────────────────── -->
+<div id="runningSection">
+    <!-- Metrics Row -->
+    <div class="row g-3 mb-4">
+        <div class="col">
+            <div class="card live-metric">
+                <div class="metric-value text-primary" id="metricBars">0</div>
+                <div class="metric-label">Bars Injected</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card live-metric">
+                <div class="metric-value text-info" id="metricScans">0</div>
+                <div class="metric-label">Scans Run</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card live-metric">
+                <div class="metric-value text-warning" id="metricAlerts">0</div>
+                <div class="metric-label">Alerts Fired</div>
+            </div>
+        </div>
+        <div class="col" id="metricTradesCol" style="display: none;">
+            <div class="card live-metric">
+                <div class="metric-value text-success" id="metricTrades">0</div>
+                <div class="metric-label">Trades Filled</div>
+            </div>
+        </div>
+        <div class="col">
+            <div class="card live-metric">
+                <div class="metric-value text-secondary" id="metricUptime">0:00</div>
+                <div class="metric-label">Uptime</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Session Info + Feed Status -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-info-circle me-2"></i>Session Info</span>
+                    <div>
+                        <button class="btn btn-danger btn-sm me-2" id="btnKill" style="display: none;"
+                                title="Emergency: disable all trade execution immediately">
+                            <i class="bi bi-x-octagon me-1"></i>Kill Trades
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" id="btnStop">
+                            <i class="bi bi-stop-fill me-1"></i>Stop Session
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <small class="text-muted">Strategy</small>
+                            <div class="fw-semibold" id="infoStrategy">-</div>
+                        </div>
+                        <div class="col-md-6">
+                            <small class="text-muted">Account</small>
+                            <div class="fw-semibold" id="infoAccount">-</div>
+                        </div>
+                    </div>
+                    <div class="row mt-2">
+                        <div class="col-md-4">
+                            <small class="text-muted">Symbol</small>
+                            <div class="fw-semibold" id="infoSymbol">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted">Bar Interval</small>
+                            <div class="fw-semibold" id="infoBarInterval">-</div>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted">Last Scan</small>
+                            <div class="fw-semibold" id="infoLastScan">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header">
+                    <i class="bi bi-wifi me-2"></i>Feed Status
+                </div>
+                <div class="card-body d-flex align-items-center">
+                    <div id="feedStatusBar" class="feed-bar disconnected w-100">
+                        <span id="feedStatusIcon" class="me-2">&#9679;</span>
+                        <span id="feedStatusText">Waiting...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Indicators -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="card" id="indicatorCard">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-graph-up me-2"></i>Live Indicators</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <small class="text-muted" id="indicatorTime">No data yet</small>
+                        <select class="form-select form-select-sm d-inline-block"
+                                style="width: auto; font-size: 0.75rem;" id="refreshRate"
+                                title="Dashboard poll interval">
+                            <option value="1000">1s</option>
+                            <option value="2000">2s</option>
+                            <option value="3000" selected>3s</option>
+                            <option value="5000">5s</option>
+                            <option value="10000">10s</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="indicatorEmpty" class="text-center text-muted py-3">
+                        No indicator data yet. Waiting for first scan...
+                    </div>
+                    <div id="indicatorGrid" class="row g-2" style="display: none;">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Proximity-to-Signal Dashboard -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="card" id="proximityCard">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-bullseye me-2"></i>Proximity to Signal</span>
+                    <small class="text-muted" id="proximityStatus">Waiting for scan data...</small>
+                </div>
+                <div class="card-body">
+                    <div id="proximityEmpty" class="text-center text-muted py-3">
+                        No proximity data yet. Waiting for conditions to be parsed from AFL...
+                    </div>
+                    <div id="proximityContainer" style="display: none;">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <h6 class="text-success mb-2"><i class="bi bi-arrow-up-circle me-1"></i>Buy Conditions</h6>
+                                <div id="proximityBuy"></div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-danger mb-2"><i class="bi bi-arrow-down-circle me-1"></i>Short Conditions</h6>
+                                <div id="proximityShort"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Display -->
+    <div id="errorDisplay" class="callout-red mb-4" style="display: none;">
+        <i class="bi bi-exclamation-triangle me-2"></i>
+        <strong>Error:</strong> <span id="errorText"></span>
+    </div>
+
+    <!-- Alert History -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <i class="bi bi-bell me-2"></i>Alert History
+            <span class="badge bg-secondary ms-2" id="alertCount">0</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time</th>
+                            <th>Signal</th>
+                            <th>Symbol</th>
+                            <th>Price</th>
+                            <th>Strategy</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alertTableBody">
+                        <tr id="noAlertsRow">
+                            <td colspan="5" class="text-center text-muted py-4">
+                                No alerts yet. Waiting for signals...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trade History (only shown when trade execution is enabled) -->
+    <div class="card" id="tradeHistoryCard" style="display: none;">
+        <div class="card-header">
+            <i class="bi bi-lightning-charge me-2"></i>Trade History
+            <span class="badge bg-secondary ms-2" id="tradeCount">0</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time</th>
+                            <th>Signal</th>
+                            <th>Symbol</th>
+                            <th>Size</th>
+                            <th>Fill Price</th>
+                            <th>Status</th>
+                            <th>Elapsed</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradeTableBody">
+                        <tr id="noTradesRow">
+                            <td colspan="7" class="text-center text-muted py-4">
+                                No trades yet. Waiting for signals...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── STOPPED SECTION ─────────────────────────────────── -->
+<div id="stoppedSection">
+    <div class="card">
+        <div class="card-header">
+            <i class="bi bi-stop-circle me-2"></i>Session Ended
+        </div>
+        <div class="card-body text-center py-4">
+            <div class="row justify-content-center g-3 mb-4">
+                <div class="col-auto">
+                    <div class="metric-card border-blue">
+                        <div class="metric-value" id="finalBars">0</div>
+                        <div class="metric-label">Bars Injected</div>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <div class="metric-card border-green">
+                        <div class="metric-value" id="finalScans">0</div>
+                        <div class="metric-label">Scans Run</div>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <div class="metric-card border-amber">
+                        <div class="metric-value" id="finalAlerts">0</div>
+                        <div class="metric-label">Alerts Fired</div>
+                    </div>
+                </div>
+                <div class="col-auto" id="finalTradesCol" style="display: none;">
+                    <div class="metric-card border-green">
+                        <div class="metric-value" id="finalTradesFilled">0</div>
+                        <div class="metric-label">Trades Filled</div>
+                    </div>
+                </div>
+                <div class="col-auto" id="finalTradesCancelledCol" style="display: none;">
+                    <div class="metric-card border-amber">
+                        <div class="metric-value" id="finalTradesCancelled">0</div>
+                        <div class="metric-label">Trades Cancelled</div>
+                    </div>
+                </div>
+            </div>
+            <div id="finalError" class="callout-red mb-3" style="display:none;">
+                <i class="bi bi-exclamation-triangle me-2"></i><span id="finalErrorText"></span>
+            </div>
+            <button class="btn btn-primary" id="btnRestart">
+                <i class="bi bi-arrow-clockwise me-2"></i>New Session
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ── STOP CONFIRMATION MODAL ──────────────────────────── -->
+<div class="modal fade" id="stopModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Stop Live Session?</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                This will stop the data feed, signal scanning, and all alerts.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="btnConfirmStop">
+                    <i class="bi bi-stop-fill me-1"></i>Stop
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+{% include 'partials/live_dashboard_js.html' %}
+{% endblock %}

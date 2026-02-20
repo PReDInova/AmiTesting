@@ -1,0 +1,52 @@
+// ===========================================
+// T03 - Live Pipeline Test (2-Min Cycle)
+// ===========================================
+//
+// Mechanical strategy for testing the live signal alert pipeline.
+// On 1-minute bars: buys every 4 bars, holds for 2 bars, exits,
+// waits 2 bars, then repeats.  ~2-minute hold, ~2-minute flat.
+//
+// No indicators, no filters. If this strategy produces zero trades
+// the problem is in the pipeline, not the strategy logic.
+//
+// Recommended live settings:
+//   Bar Interval:  1 min
+//   Scan Interval: 15-30 sec (so alerts fire promptly)
+
+// ---- 4-bar cycle: buy at 0, sell at 2, repeat ----
+barMod = BarIndex() % 4;
+
+Buy  = barMod == 0;
+Sell = barMod == 2;
+
+// No short trades -- keep it simple
+Short = 0;
+Cover = 0;
+
+// ---- Position sizing: 1 contract ----
+
+// ---- Remove excess signals ----
+Buy  = ExRem(Buy, Sell);
+Sell = ExRem(Sell, Buy);
+
+// ---- Visualization ----
+
+// Shade the "in position" bars for quick visual confirmation
+inPosition = Flip(Buy, Sell);
+
+
+
+// ==== LIVE SIGNAL SCAN ====
+_recentBars = BarIndex() >= (BarCount - 5);
+Filter = (Buy OR Sell OR Short OR Cover) AND _recentBars AND Name() == "NQ";
+
+AddColumn(Buy, "Buy", 1.0);
+AddColumn(Sell, "Sell", 1.0);
+AddColumn(Short, "Short", 1.0);
+AddColumn(Cover, "Cover", 1.0);
+AddColumn(Close, "Close", 1.4);
+AddColumn(Open, "Open", 1.4);
+AddColumn(High, "High", 1.4);
+AddColumn(Low, "Low", 1.4);
+AddColumn(Volume, "Volume", 1.0);
+// ==== END LIVE SIGNAL SCAN ====

@@ -38,7 +38,7 @@ AMIBROKER_EXE_PATH: str = r"C:\Program Files (x86)\AmiBroker\Broker.exe"
 # Symbol & file references
 # ---------------------------------------------------------------------------
 
-GCZ25_SYMBOL: str = "GCZ5"
+DEFAULT_SYMBOL: str = "GC"
 
 AFL_STRATEGY_FILE: Path = AFL_DIR / "ma_crossover.afl"
 APX_TEMPLATE: Path = APX_DIR / "base.apx"
@@ -79,9 +79,16 @@ CHART_SETTINGS: dict = {
 # ---------------------------------------------------------------------------
 
 
-def setup_logging() -> None:
+def setup_logging(correlation_id: str = "") -> None:
     """Configure Python logging to write to both *LOG_FILE* and the console
-    at the INFO level."""
+    at the INFO level.
+
+    Parameters
+    ----------
+    correlation_id : str
+        Optional session/run ID prepended to each log line for correlating
+        concurrent operations (e.g. multiple live strategies).
+    """
 
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -92,10 +99,13 @@ def setup_logging() -> None:
     if logger.handlers:
         return
 
-    formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    # Include correlation ID in format if provided
+    if correlation_id:
+        fmt = f"%(asctime)s | %(levelname)-8s | [{correlation_id}] %(name)s | %(message)s"
+    else:
+        fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+
+    formatter = logging.Formatter(fmt, datefmt="%Y-%m-%d %H:%M:%S")
 
     # File handler
     file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
@@ -108,3 +118,60 @@ def setup_logging() -> None:
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
+
+
+# ---------------------------------------------------------------------------
+# Startup validation
+# ---------------------------------------------------------------------------
+
+def validate_config(check_live: bool = False) -> list[str]:
+    """Validate configuration at startup. Returns a list of error messages.
+
+    If the list is empty, configuration is valid.
+
+    Parameters
+    ----------
+    check_live : bool
+        If True, also validate live trading configuration (.env, etc.).
+    """
+    import os
+
+    errors = []
+
+    # Check AmiBroker database path
+    ami_db = Path(AMIBROKER_DB_PATH)
+    if not ami_db.exists():
+        errors.append(f"AmiBroker database not found: {AMIBROKER_DB_PATH}")
+
+    # Check AmiBroker executable path
+    ami_exe = Path(AMIBROKER_EXE_PATH)
+    if not ami_exe.exists():
+        errors.append(f"AmiBroker executable not found: {AMIBROKER_EXE_PATH}")
+
+    # Check APX template
+    if not APX_TEMPLATE.exists():
+        errors.append(f"APX template not found: {APX_TEMPLATE}")
+
+    # Check AFL strategy file
+    if not AFL_STRATEGY_FILE.exists():
+        errors.append(f"AFL strategy file not found: {AFL_STRATEGY_FILE}")
+
+    # Check required directories exist (create if needed)
+    for d in [RESULTS_DIR, LOGS_DIR, CACHE_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    if check_live:
+        # Check .env file exists
+        env_path = PROJECT_ROOT / ".env"
+        if not env_path.exists():
+            errors.append(f".env file not found: {env_path}")
+        else:
+            # Check required env vars
+            from dotenv import load_dotenv
+            load_dotenv(env_path)
+            if not os.environ.get("PROJECT_X_API_KEY"):
+                errors.append("PROJECT_X_API_KEY not set in .env")
+            if not os.environ.get("PROJECT_X_USERNAME"):
+                errors.append("PROJECT_X_USERNAME not set in .env")
+
+    return errors

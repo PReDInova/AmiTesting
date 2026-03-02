@@ -191,44 +191,160 @@ document.addEventListener('DOMContentLoaded', function() {
     } // end isOptimization
 
     /* ═══════════════════════════════════════════════════════
-       BACKTEST TABLE -- Cached Data Layer + Sorting + Stats
+       BACKTEST TABLE -- Data-Driven Pagination + Sorting + Stats
        ═══════════════════════════════════════════════════════
-       Performance: all cell values are parsed ONCE into a JS
-       cache on page load.  Sorting and histogram read from
-       the cache -- zero DOM reads on user interaction.
+       Performance: trade data is embedded as JSON in RESULTS_CONFIG.
+       Only the current page of rows is rendered to the DOM.
+       Sorting and stats operate on the in-memory JS array.
        ═══════════════════════════════════════════════════════ */
     (function() {
         var btTable = document.getElementById('btTradeTable');
         if (!btTable) return;
 
-        var tbody = btTable.querySelector('tbody');
-        var headerCells = btTable.querySelectorAll('thead tr th');
-        var numCols = headerCells.length;
+        var tbody = document.getElementById('btTradeBody');
+        if (!tbody) return;
 
-        // ── Build cache: parse every cell value once ──
-        var _rows = [];          // [{el, cells: [val,...], nums: [float|NaN,...], profit, isWin}]
-        var domRows = tbody.querySelectorAll('tr');
-        for (var ri = 0; ri < domRows.length; ri++) {
-            var tr = domRows[ri];
-            var cells = [];
-            var nums = [];
-            var ch = tr.children;
-            for (var ci = 0; ci < ch.length; ci++) {
-                var txt = ch[ci].textContent.trim();
+        var td = _resultsCfg.tradeData || {};
+        var columns = td.columns || [];
+        var rawTrades = td.trades || [];
+        var profitColumn = td.profitColumn || '';
+
+        if (rawTrades.length === 0 && columns.length === 0) return;
+
+        // ── Build cache from JSON data (zero DOM reads) ──
+        var _rows = [];
+        for (var ri = 0; ri < rawTrades.length; ri++) {
+            var trade = rawTrades[ri];
+            // cells[0] = row number placeholder, cells[1..N] = column values
+            var cells = [String(ri + 1)];
+            var nums = [ri + 1];
+            for (var ci = 0; ci < columns.length; ci++) {
+                var val = trade[columns[ci]];
+                var txt = (val === null || val === undefined) ? '' : String(val);
                 cells.push(txt);
                 nums.push(parseFloat(txt));
             }
-            var profit = parseFloat(tr.dataset.profit);
+            var profit = profitColumn ? parseFloat(trade[profitColumn]) : parseFloat(trade['Profit']);
+            if (isNaN(profit)) profit = NaN;
             _rows.push({
-                el: tr,
                 cells: cells,
                 nums: nums,
                 profit: profit,
-                isWin: !isNaN(profit) ? profit > 0 : null
+                isWin: !isNaN(profit) ? profit > 0 : null,
+                raw: trade,
+                origIndex: ri + 1
             });
         }
 
-        // ── Sorting (single-click) -- reads from cache ──
+        // ── Pagination state ──
+        var _currentPage = 1;
+        var _pageSize = 50;
+        var _totalPages = 1;
+
+        var paginationEl = document.getElementById('btPagination');
+        var pageInfoEl = document.getElementById('btPageInfo');
+        var pageLabelEl = document.getElementById('btPageLabel');
+        var btnFirst = document.getElementById('btPageFirst');
+        var btnPrev = document.getElementById('btPagePrev');
+        var btnNext = document.getElementById('btPageNext');
+        var btnLast = document.getElementById('btPageLast');
+
+        function updatePagination() {
+            if (_pageSize === 0) {
+                _totalPages = 1;
+                _currentPage = 1;
+            } else {
+                _totalPages = Math.max(1, Math.ceil(_rows.length / _pageSize));
+                if (_currentPage > _totalPages) _currentPage = _totalPages;
+            }
+        }
+
+        function renderPage() {
+            updatePagination();
+            var start, end;
+            if (_pageSize === 0) {
+                start = 0;
+                end = _rows.length;
+            } else {
+                start = (_currentPage - 1) * _pageSize;
+                end = Math.min(start + _pageSize, _rows.length);
+            }
+
+            // Build all rows in a fragment (single DOM write)
+            var frag = document.createDocumentFragment();
+            for (var i = start; i < end; i++) {
+                var row = _rows[i];
+                var tr = document.createElement('tr');
+                tr.className = 'trade-row-clickable';
+                if (row.isWin === true) tr.classList.add('trade-win');
+                else if (row.isWin === false) tr.classList.add('trade-loss');
+
+                tr.dataset.symbol = row.raw['Symbol'] || '';
+                tr.dataset.entryDate = row.raw['Date'] || '';
+                tr.dataset.exitDate = row.raw['Ex. date'] || '';
+                tr.dataset.entryPrice = row.raw['Price'] || '';
+                tr.dataset.exitPrice = row.raw['Ex. Price'] || '';
+                tr.dataset.tradeType = row.raw['Trade'] || '';
+                tr.dataset.profit = isNaN(row.profit) ? '' : String(row.profit);
+                tr.dataset.tradeIndex = String(i + 1);
+
+                // # column (global position in sorted list)
+                var numTd = document.createElement('td');
+                numTd.className = 'text-muted';
+                numTd.textContent = String(i + 1);
+                tr.appendChild(numTd);
+
+                // Data columns
+                for (var ci = 1; ci <= columns.length; ci++) {
+                    var td_el = document.createElement('td');
+                    td_el.textContent = row.cells[ci];
+                    tr.appendChild(td_el);
+                }
+                frag.appendChild(tr);
+            }
+            tbody.textContent = '';
+            tbody.appendChild(frag);
+
+            // Update pagination controls
+            if (paginationEl) {
+                paginationEl.classList.toggle('d-none', _rows.length <= 25);
+            }
+            if (pageInfoEl) {
+                if (_rows.length === 0) {
+                    pageInfoEl.textContent = 'No trades';
+                } else {
+                    pageInfoEl.textContent = 'Showing ' + (start + 1) + '\u2013' + end + ' of ' + _rows.length + ' trades';
+                }
+            }
+            if (pageLabelEl) {
+                pageLabelEl.textContent = _currentPage + ' / ' + _totalPages;
+            }
+            if (btnFirst) btnFirst.disabled = _currentPage <= 1;
+            if (btnPrev) btnPrev.disabled = _currentPage <= 1;
+            if (btnNext) btnNext.disabled = _currentPage >= _totalPages;
+            if (btnLast) btnLast.disabled = _currentPage >= _totalPages;
+        }
+
+        // ── Wire pagination controls ──
+        if (btnFirst) btnFirst.addEventListener('click', function() { _currentPage = 1; renderPage(); });
+        if (btnPrev) btnPrev.addEventListener('click', function() { if (_currentPage > 1) { _currentPage--; renderPage(); } });
+        if (btnNext) btnNext.addEventListener('click', function() { if (_currentPage < _totalPages) { _currentPage++; renderPage(); } });
+        if (btnLast) btnLast.addEventListener('click', function() { _currentPage = _totalPages; renderPage(); });
+
+        document.querySelectorAll('#btPageSizeGroup .btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('#btPageSizeGroup .btn').forEach(function(b) { b.classList.remove('active'); });
+                this.classList.add('active');
+                _pageSize = parseInt(this.dataset.size);
+                _currentPage = 1;
+                renderPage();
+            });
+        });
+
+        // ── Initial render ──
+        renderPage();
+
+        // ── Sorting (single-click) -- sorts cache, re-renders page ──
         var btSortDir = {};
         var _sortBusy = false;
         btTable.querySelectorAll('.bt-sortable').forEach(function(th) {
@@ -242,11 +358,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 btSortDir[col] = btSortDir[col] === 'asc' ? 'desc' : 'asc';
                 var dir = btSortDir[col];
 
-                // Show shimmer -- let browser paint, then sort in next frame
                 btTable.classList.add('bt-sorting');
 
                 requestAnimationFrame(function() {
-                    // Sort the cache array (no DOM reads)
                     _rows.sort(function(a, b) {
                         var aN = a.nums[colIdx], bN = b.nums[colIdx];
                         if (!isNaN(aN) && !isNaN(bN)) {
@@ -256,13 +370,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         return dir === 'asc' ? aV.localeCompare(bV) : bV.localeCompare(aV);
                     });
 
-                    // Batch DOM update with DocumentFragment
-                    var frag = document.createDocumentFragment();
-                    for (var i = 0; i < _rows.length; i++) {
-                        _rows[i].el.children[0].textContent = i + 1;
-                        frag.appendChild(_rows[i].el);
-                    }
-                    tbody.appendChild(frag);
+                    _currentPage = 1;
+                    renderPage();
 
                     // Update sort icons
                     btTable.querySelectorAll('.bt-sortable i').forEach(function(icon) {
@@ -273,25 +382,22 @@ document.addEventListener('DOMContentLoaded', function() {
                     icon.className = dir === 'asc' ? 'bi bi-chevron-up ms-1' : 'bi bi-chevron-down ms-1';
                     icon.style.opacity = '1';
 
-                    // Remove shimmer after animation completes
                     btTable.classList.remove('bt-sorting');
                     _sortBusy = false;
                 });
             });
-
         });
 
         // ── Column Statistics -- triggered by stats button click ──
+        // Reads from _rows cache (all trades), not DOM
         btTable.querySelectorAll('.bt-stats-btn').forEach(function(btn) {
             btn.addEventListener('click', function(e) {
-                e.stopPropagation(); // prevent sort
+                e.stopPropagation();
                 e.preventDefault();
                 var th = this.closest('th');
                 var col = th.dataset.col;
                 var colIdx = Array.from(th.parentNode.children).indexOf(th);
 
-                // Collect entries from cache (zero DOM reads)
-                // Try numeric first; fall back to HH:MM time parsing
                 var entries = [];
                 var isTimeParsed = false;
                 for (var i = 0; i < _rows.length; i++) {
@@ -301,7 +407,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
                 if (entries.length === 0) {
-                    // Try HH:MM or H:MM time format -> decimal hours
                     var timeRe = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
                     for (var i = 0; i < _rows.length; i++) {
                         var txt = _rows[i].cells[colIdx];
@@ -314,7 +419,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (entries.length > 0) isTimeParsed = true;
                 }
                 if (entries.length === 0) {
-                    // No numeric/time data -- show message in modal
                     var loadingEl = document.getElementById('colStatsLoading');
                     var readyEl = document.getElementById('colStatsReady');
                     loadingEl.innerHTML = '<i class="bi bi-info-circle text-muted" style="font-size:2rem;"></i>' +
@@ -323,7 +427,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     document.getElementById('colStatsTitle').textContent = col;
                     var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('colStatsModal'));
                     modal.show();
-                    // Reset loading content when modal closes
                     document.getElementById('colStatsModal').addEventListener('hidden.bs.modal', function resetLoading() {
                         loadingEl.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>' +
                             '<div class="loading-text">Computing statistics...</div>';
@@ -332,17 +435,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     return;
                 }
 
-                // ── Show modal with loading spinner immediately ──
                 var loadingEl = document.getElementById('colStatsLoading');
                 var readyEl = document.getElementById('colStatsReady');
-                // Reset to spinner (may have been overwritten by "no data" message)
                 loadingEl.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div>' +
                     '<div class="loading-text">Computing statistics...</div>';
                 loadingEl.style.display = '';
                 readyEl.classList.remove('is-ready');
                 document.getElementById('colStatsTitle').textContent = col + ' \u2014 Distribution';
 
-                // Destroy previous chart before showing spinner
                 if (window._colStatsChartInstance) {
                     window._colStatsChartInstance.destroy();
                     window._colStatsChartInstance = null;
@@ -351,10 +451,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 var modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('colStatsModal'));
                 modal.show();
 
-                // ── Defer heavy work so spinner paints first ──
                 requestAnimationFrame(function() { setTimeout(function() {
 
-                // State for the interactive histogram
                 var allEntries = entries;
                 var fullMin = Infinity, fullMax = -Infinity;
                 for (var i = 0; i < entries.length; i++) {
@@ -365,7 +463,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 var showWinLoss = false;
                 var currentFilter = 'all';
 
-                // Refs
                 var canvas = document.getElementById('colStatsChart');
                 var slider = document.getElementById('colStatsBinSlider');
                 var binCountEl = document.getElementById('colStatsBinCount');
@@ -375,7 +472,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 var wlBtn = document.getElementById('colStatsShowWL');
                 var legendEl = document.getElementById('colStatsLegend');
 
-                // Pre-split win/loss arrays once for fast filter
                 var winEntries = [], lossEntries = [];
                 for (var i = 0; i < allEntries.length; i++) {
                     if (allEntries[i].isWin === true) winEntries.push(allEntries[i]);
@@ -408,7 +504,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 function fmtStat(v) {
                     if (isTimeParsed) {
-                        // Convert decimal hours back to HH:MM
                         var h = Math.floor(v);
                         var m = Math.round((v - h) * 60);
                         if (m === 60) { h++; m = 0; }
@@ -561,7 +656,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateStatsTable();
                 renderHistogram();
 
-                // ── Swap loading -> ready ──
                 loadingEl.style.display = 'none';
                 readyEl.classList.add('is-ready');
 
@@ -1023,6 +1117,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
     var INTERVAL_LABELS = {60: '1-min', 300: '5-min', 600: '10-min', 86400: 'Daily'};
 
+    // --- Strategy drawer toggle ---
+    var drawerToggle = document.getElementById('strategyDrawerToggle');
+    var strategyDrawer = document.getElementById('strategyDrawer');
+    if (drawerToggle && strategyDrawer) {
+        drawerToggle.addEventListener('click', function() {
+            var isOpen = strategyDrawer.classList.toggle('open');
+            drawerToggle.classList.toggle('active', isOpen);
+            // Resize chart after transition completes
+            setTimeout(function() {
+                if (candlestickChart) candlestickChart.applyOptions({ width: document.getElementById('candlestickChartContainer').clientWidth });
+                if (tradeSubPaneChart) tradeSubPaneChart.applyOptions({ width: document.getElementById('tradeSubPaneChart').clientWidth });
+            }, 280);
+        });
+    }
+
     function fmtPrice(v) { return v != null ? v.toFixed(2) : '--'; }
     function fmtNum(v) { return v != null ? v.toFixed(2) : '--'; }
     function fmtVol(v) {
@@ -1037,22 +1146,25 @@ document.addEventListener('DOMContentLoaded', function() {
         return d.innerHTML;
     }
 
-    // --- Trade row click handler ---
-    document.querySelectorAll('.trade-row-clickable').forEach(function(row) {
-        row.addEventListener('click', function(e) {
+    // --- Trade row click handler (event delegation for paginated rows) ---
+    var tradeBody = document.getElementById('btTradeBody');
+    if (tradeBody) {
+        tradeBody.addEventListener('click', function(e) {
             if (e.target.closest('a, button')) return;
-            var symbol = this.dataset.symbol;
-            var entryDate = this.dataset.entryDate;
-            var exitDate = this.dataset.exitDate;
-            var entryPrice = parseFloat(this.dataset.entryPrice);
-            var exitPrice = parseFloat(this.dataset.exitPrice);
-            var tradeType = this.dataset.tradeType;
-            var tradeIndex = this.dataset.tradeIndex;
-            var profit = parseFloat(this.dataset.profit) || 0;
+            var row = e.target.closest('.trade-row-clickable');
+            if (!row) return;
+            var symbol = row.dataset.symbol;
+            var entryDate = row.dataset.entryDate;
+            var exitDate = row.dataset.exitDate;
+            var entryPrice = parseFloat(row.dataset.entryPrice);
+            var exitPrice = parseFloat(row.dataset.exitPrice);
+            var tradeType = row.dataset.tradeType;
+            var tradeIndex = row.dataset.tradeIndex;
+            var profit = parseFloat(row.dataset.profit) || 0;
             if (!symbol || !entryDate || !exitDate) return;
             showCandlestickChart(symbol, entryDate, exitDate, entryPrice, exitPrice, tradeType, tradeIndex, profit);
         });
-    });
+    }
 
     // --- Timeframe selector ---
     document.querySelectorAll('#tfSelector .btn').forEach(function(btn) {
@@ -1416,12 +1528,19 @@ document.addEventListener('DOMContentLoaded', function() {
         // Threshold lines
         subIndicators.forEach(function(ind) {
             if (ind.type === 'rsi') {
-                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_ob', 70, '#FF174480', bars);
-                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_os', 30, '#00C85380', bars);
+                var rsiOb = ind.overbought || 70;
+                var rsiOs = ind.oversold || 30;
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_ob', rsiOb, '#FF174480', bars);
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'rsi_os', rsiOs, '#00C85380', bars);
             }
             if (ind.type === 'stochastic') {
-                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_ob', 80, '#FF174480', bars);
-                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_os', 20, '#00C85380', bars);
+                var stochOb = ind.overbought || 80;
+                var stochOs = ind.oversold || 20;
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_ob', stochOb, '#FF174480', bars);
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'stoch_os', stochOs, '#00C85380', bars);
+            }
+            if (ind.type === 'adx' && ind.threshold) {
+                tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'adx_thresh', ind.threshold, '#FF980080', bars);
             }
             if (ind.type === 'derivative') {
                 tradeAddHLine(tradeSubPaneChart, tradeSubPaneSeries, 'deriv_zero', 0, '#9E9E9E80', bars);

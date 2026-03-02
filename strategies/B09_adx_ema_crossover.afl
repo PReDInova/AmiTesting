@@ -2,8 +2,7 @@
 // B09 - ADX-Filtered EMA Crossover
 // ===========================================
 //
-// Trend-following strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Uses standard EMA crossover signals filtered by ADX
+// Trend-following strategy on native 1-minute data. Uses standard EMA crossover signals filtered by ADX
 // to avoid entries during dead-flat periods when directional movement is
 // insufficient. RSI provides additional overbought/oversold confirmation.
 //
@@ -14,9 +13,12 @@
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 emaFast      = Param("EMA Fast", 20, 5, 30, 1);
 emaSlow      = Param("EMA Slow", 50, 20, 100, 5);
 adxPer       = Param("ADX Period", 14, 5, 50, 1);
@@ -28,17 +30,14 @@ sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult       = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult   = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- StdDev Exit Indicator (from indicator library) ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- EMA Calculations (AmiBroker built-ins) ----
 fastEMA = EMA(Close, emaFast);
@@ -57,33 +56,19 @@ minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
 DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
 ADXvalue    = Wilders(DX, adxPer);
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (filtered by session, ADX trend, and RSI) ----
 trendActive = ADXvalue > adxThreshold;
 
-buySignal   = Cross(fastEMA, slowEMA) AND trendActive AND rsiVal < rsiOB AND asianSession;
-shortSignal = Cross(slowEMA, fastEMA) AND trendActive AND rsiVal > rsiOS AND asianSession;
+buySignal   = Cross(fastEMA, slowEMA) AND trendActive AND rsiVal < rsiOB AND isTargetSymbol;
+shortSignal = Cross(slowEMA, fastEMA) AND trendActive AND rsiVal > rsiOS AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 fastEMA1m  = fastEMA;
 slowEMA1m  = slowEMA;
 exitDist1m = exitDistance;
 adx1m      = ADXvalue;
 rsi1m      = rsiVal;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-fastEMA1m   = TimeFrameExpand(fastEMA1m, in1Minute);
-slowEMA1m   = TimeFrameExpand(slowEMA1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-adx1m       = TimeFrameExpand(adx1m, in1Minute);
-rsi1m       = TimeFrameExpand(rsi1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

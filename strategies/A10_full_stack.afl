@@ -6,43 +6,44 @@
 // confirmed by ADX trending strength and TEMA trend direction.
 // Three independent filters must all agree for entry.
 //
-// Entry Long:  czBreakoutUp   AND ADX > threshold AND ADX rising AND Close > TEMA
-// Entry Short: czBreakoutDown AND ADX > threshold AND ADX rising AND Close < TEMA
+// Entry Long:  czBreakoutUp   AND ADX > threshold AND Close > TEMA
+// Entry Short: czBreakoutDown AND ADX > threshold AND Close < TEMA
 //
 // Exit: StdDev-based stop loss and profit target (wider for confirmed breakouts)
 //
-// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 czTemaLength  = Param("CZ TEMA Length", 21, 5, 50, 1);
-trendTemaLen  = Param("Trend TEMA Length", 34, 5, 100, 1);
+trendTemaLen  = Param("Trend TEMA Length", 8, 5, 100, 1);
 adxPer        = Param("ADX Period", 14, 5, 50, 1);
-adxThreshold  = Param("ADX Threshold", 20, 10, 40, 1);
+adxThreshold  = Param("ADX Threshold", 12, 5, 40, 1);
 sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult        = Param("SD Multiplier", 2.0, 0.1, 5.0, 0.1);
 profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;
 
 // ---- Consolidation Zones Indicator ----
 // czTemaLength is already set above; consolidation_zones.afl uses typeof() checks
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
 
-// ---- TEMA Indicator (separate trend TEMA, different length from CZ internal TEMA) ----
-// Set smoothingLength AFTER including consolidation_zones.afl so it uses trendTemaLen
-smoothingLength = trendTemaLen;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, trendTemaLen);
+ema2 = EMA(ema1, trendTemaLen);
+ema3 = EMA(ema2, trendTemaLen);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
 
 // ---- StdDev Exit Indicator ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- ADX Inline Calculation ----
 adxTR = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
@@ -57,35 +58,21 @@ ADXvalue = Wilders(DX, adxPer);
 // ---- ADX Trend Initiation Detection ----
 adxRising = ADXvalue > Ref(ADXvalue, -3);
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m          = temas;
 czBreakoutUp1m  = czBreakoutUp;
 czBreakoutDn1m  = czBreakoutDown;
 exitDist1m      = exitDistance;
 adxVal1m        = ADXvalue;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Full Stack Entry Signals ----
 // All three filters must agree:
 // 1. Consolidation zone breakout direction
-// 2. ADX above threshold and rising (trend initiation)
+// 2. ADX above threshold (sufficient trend strength)
 // 3. TEMA confirms trend direction
-buySignal   = asianSession AND czBreakoutUp1m AND ADXvalue > adxThreshold AND adxRising AND Close > tema1m;
-shortSignal = asianSession AND czBreakoutDn1m AND ADXvalue > adxThreshold AND adxRising AND Close < tema1m;
+buySignal   = czBreakoutUp1m AND ADXvalue > adxThreshold AND Close > tema1m AND isTargetSymbol;
+shortSignal = czBreakoutDn1m AND ADXvalue > adxThreshold AND Close < tema1m AND isTargetSymbol;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m         = TimeFrameExpand(tema1m, in1Minute);
-czBreakoutUp1m = TimeFrameExpand(czBreakoutUp1m, in1Minute);
-czBreakoutDn1m = TimeFrameExpand(czBreakoutDn1m, in1Minute);
-exitDist1m     = TimeFrameExpand(exitDist1m, in1Minute);
-adxVal1m       = TimeFrameExpand(adxVal1m, in1Minute);
-buySignal      = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal    = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Entry signals ----
 Buy   = buySignal;
@@ -118,5 +105,4 @@ Title = Name() + " | A10 Full Stack CZ+ADX+TEMA" +
         " | Thresh=" + NumToStr(adxThreshold, 1.0) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
         " ProfM=" + NumToStr(profitMult, 1.1) +
-        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
-        " | Asian Session";
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

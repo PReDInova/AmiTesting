@@ -19,38 +19,55 @@
 //
 // Exit: StdDev-based stop loss and profit target
 //
-// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength          = Param("TEMA Length", 21, 5, 100, 1);
-lookback            = Param("Deriv Lookback", 8, 3, 21, 1);
-minSeparation       = Param("Min Separation", 10, 3, 30, 1);
-similarityThreshold = Param("Similarity Threshold (SD mult)", 0.5, 0.1, 2.0, 0.1);
-maxRetestBars       = Param("Max Retest Bars", 60, 10, 180, 5);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength          = Param("TEMA Length", 8, 3, 50, 1);
+lookback            = Param("Deriv Lookback", 3, 2, 21, 1);
+minSeparation       = Param("Min Separation", 3, 1, 30, 1);
+similarityThreshold = Param("Similarity Threshold (SD mult)", 2.0, 0.1, 5.0, 0.1);
+maxRetestBars       = Param("Max Retest Bars", 120, 10, 300, 5);
 sdBars              = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult              = Param("SD Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult          = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
 
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
 
-// ---- TEMA Indicator (must be included first - derivative_lookback needs temas) ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
-// ---- Derivative Lookback Indicator ----
-// Requires: temas (array), lookback (int), minSeparation (int), sessionResetTime
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\derivative_lookback.afl"
+// ---- Derivative Calculation (inline) ----
+firstDeriv  = (temas - Ref(temas, -lookback)) / lookback;
+secondDeriv = firstDeriv - Ref(firstDeriv, -lookback);
 
-// ---- StdDev Exit Indicator ----
-sdLookback   = sdBars;
-sdMultiplier = sdMult;
-sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- Peak/Trough Detection ----
+slopeChangePosToNeg = Ref(firstDeriv, -1) > 0 AND firstDeriv <= 0;
+slopeChangeNegToPos = Ref(firstDeriv, -1) < 0 AND firstDeriv >= 0;
+isPeak   = slopeChangePosToNeg AND (secondDeriv < 0);
+isTrough = slopeChangeNegToPos AND (secondDeriv > 0);
+
+// ---- Min-separation filter ----
+validPeak   = isPeak AND BarsSince(Ref(isPeak, -1)) >= minSeparation AND BarsSince(Ref(isTrough, -1)) >= minSeparation;
+validTrough = isTrough AND BarsSince(Ref(isTrough, -1)) >= minSeparation AND BarsSince(Ref(isPeak, -1)) >= minSeparation;
+
+// ---- Peak/Trough levels ----
+peakLevel = ValueWhen(validPeak, temas);
+troughLevel = ValueWhen(validTrough, temas);
+
+// ---- Bars since previous peak/trough (for double-touch recency) ----
+sincePeakPrev = BarsSince(Ref(validPeak, -1));
+sinceTroughPrev = BarsSince(Ref(validTrough, -1));
+
+
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdBars);
+exitDistance = sdMult * exitStdDev;
 
 // ---- Double Touch Detection ----
 // At bar where validTrough fires:
@@ -75,26 +92,22 @@ peakSimilar   = peakDiff <= similarityThreshold * exitStdDev;
 troughRecent = sinceTroughPrev <= maxRetestBars;
 peakRecent   = sincePeakPrev <= maxRetestBars;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Double Touch Entry Signals ----
 // Double Bottom (BUY): second trough at similar level -> reversal up expected
-buySignal = asianSession
+buySignal = isTargetSymbol
         AND validTrough
         AND prevTroughExists
         AND troughSimilar
         AND troughRecent;
 
 // Double Top (SHORT): second peak at similar level -> reversal down expected
-shortSignal = asianSession
+shortSignal = isTargetSymbol
           AND validPeak
           AND prevPeakExists
           AND peakSimilar
           AND peakRecent;
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m        = temas;
 validPeak1m   = validPeak;
 validTrough1m = validTrough;
@@ -104,19 +117,6 @@ exitDist1m    = exitDistance;
 troughDiff1m  = troughDiff;
 peakDiff1m    = peakDiff;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m        = TimeFrameExpand(tema1m, in1Minute);
-validPeak1m   = TimeFrameExpand(validPeak1m, in1Minute);
-validTrough1m = TimeFrameExpand(validTrough1m, in1Minute);
-peakLevel1m   = TimeFrameExpand(peakLevel1m, in1Minute);
-troughLevel1m = TimeFrameExpand(troughLevel1m, in1Minute);
-exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
-troughDiff1m  = TimeFrameExpand(troughDiff1m, in1Minute);
-peakDiff1m    = TimeFrameExpand(peakDiff1m, in1Minute);
-buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Entry signals ----
 Buy   = buySignal;
@@ -160,5 +160,4 @@ Title = Name() + " | C09 Double Touch Reversal" +
         " PkDiff=" + NumToStr(peakDiff1m, 1.4) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
         " ProfM=" + NumToStr(profitMult, 1.1) +
-        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
-        " | Asian Session";
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

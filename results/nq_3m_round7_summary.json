@@ -1,0 +1,32 @@
+{
+  "B04 - Stochastic Range Trading": {
+    "strategy_id": "2494c999-a400-4a99-a66c-5b93142a470b",
+    "version_id": "485c19e0-538b-42c8-beca-d4af63f4e666",
+    "run_id": "4fedbc94-cac6-49a0-8825-d330c75ea08d",
+    "exit_code": 0,
+    "trade_count": 0,
+    "total_profit": 0.0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C03 - Range-Bound Stochastic Reversal": {
+    "strategy_id": "40aef56d-a4ae-4e25-92e3-a94b20a08724",
+    "version_id": "3b5c29ba-d8ef-4a8f-8924-552a8965b7bb",
+    "run_id": "2cd620e3-5772-47d4-a160-bccf5e7674d9",
+    "exit_code": 0,
+    "trade_count": 0,
+    "total_profit": 0.0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C08 - VWAP Cloud Breakout + ADX Momentum": {
+    "strategy_id": "de5f9e1c-9c5f-4c6c-9cab-a14ef3c2fc71",
+    "version_id": "83bb0ae9-2d63-4274-98fe-2df5076ee79a",
+    "run_id": "5531edce-aa37-4c1b-b0d4-43a7d7c3cecd",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  }
+}

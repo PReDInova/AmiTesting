@@ -2,8 +2,7 @@
 // C01 - Consolidation + VWAP + ADX Triple Filter
 // ===========================================
 //
-// Highest conviction breakout strategy for /GC Gold Futures during the
-// Asian session (6 PM - 3 AM EST). Requires three independent filters
+// Highest conviction breakout strategy on native 1-minute data. Requires three independent filters
 // to all agree before entering a trade:
 //
 // 1. Consolidation Zone breakout (price exits a detected CZ)
@@ -22,22 +21,20 @@
 // Exit: StdDev-based symmetric stops with wider multiplier (2.0)
 //       to give high-conviction breakouts room to develop
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 adxPer          = Param("ADX Period", 14, 5, 50, 1);
-adxThreshold    = Param("ADX Threshold", 20, 10, 35, 1);
-adxRiseLookback = Param("ADX Rise Lookback", 5, 2, 10, 1);
+adxThreshold    = Param("ADX Threshold", 12, 5, 35, 1);
+adxRiseLookback = Param("ADX Rise Lookback", 2, 1, 10, 1);
 czTemaLength    = Param("CZ TEMA Length", 21, 5, 50, 1);
 sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 2.0, 0.1, 5.0, 0.1);
 profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Consolidation Zone Indicator (from indicator library) ----
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
@@ -52,7 +49,9 @@ vwStdev3 = 3;
 sdMultiplier = sdMult;
 sdLookback = sdBars;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
 adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
@@ -67,15 +66,11 @@ ADXvalue    = Wilders(DX, adxPer);
 // ---- ADX Rising Check ----
 adxRising = ADXvalue > Ref(ADXvalue, -adxRiseLookback);
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (triple filter: CZ breakout + VWAP position + ADX strength) ----
-buySignal   = czBreakoutUp AND Close > VWAP AND ADXvalue > adxThreshold AND adxRising AND asianSession;
-shortSignal = czBreakoutDown AND Close < VWAP AND ADXvalue > adxThreshold AND adxRising AND asianSession;
+buySignal   = czBreakoutUp AND Close > VWAP AND ADXvalue > adxThreshold AND adxRising AND isTargetSymbol;
+shortSignal = czBreakoutDown AND Close < VWAP AND ADXvalue > adxThreshold AND adxRising AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 exitDist1m   = exitDistance;
 vwap1m       = VWAP;
 adx1m        = ADXvalue;
@@ -84,18 +79,6 @@ czLow1m      = czLow;
 czMid1m      = czMid;
 isConsol1m   = isConsolidating;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-vwap1m      = TimeFrameExpand(vwap1m, in1Minute);
-adx1m       = TimeFrameExpand(adx1m, in1Minute);
-czHigh1m    = TimeFrameExpand(czHigh1m, in1Minute);
-czLow1m     = TimeFrameExpand(czLow1m, in1Minute);
-czMid1m     = TimeFrameExpand(czMid1m, in1Minute);
-isConsol1m  = TimeFrameExpand(isConsol1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

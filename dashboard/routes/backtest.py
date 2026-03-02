@@ -255,6 +255,7 @@ def results_detail(filename: str):
         run=None,
         is_optimization=parsed.get("is_optimization", False),
         indicator_configs=[],
+        strategy_params=[],
         symbol_runs={},
     )
 
@@ -322,10 +323,11 @@ def run_detail(run_id: str):
     strategy = run.get("strategy") or get_strategy_info(run["strategy_id"])
     version = run.get("version")
 
-    from scripts.afl_parser import extract_strategy_indicators
+    from scripts.afl_parser import extract_strategy_indicators, extract_strategy_params
 
     _afl = run.get("afl_content") or (version.get("afl_content", "") if version else "")
     indicator_configs = extract_strategy_indicators(_afl) if _afl else []
+    strategy_params = extract_strategy_params(_afl, indicator_configs) if _afl else []
 
     symbol_runs = {}
     current_version_id = run.get("version_id")
@@ -385,6 +387,7 @@ def run_detail(run_id: str):
         default_symbol=DEFAULT_SYMBOL,
         symbol_runs=symbol_runs,
         indicator_configs=indicator_configs,
+        strategy_params=strategy_params,
         active_symbol=active_symbol,
         selected_symbol=selected_symbol,
     )

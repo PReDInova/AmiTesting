@@ -1,50 +1,47 @@
 // ===========================================
-// B13 - NY Momentum Carryover
+// B13 - MACD Momentum + TEMA Crossover
 // ===========================================
 //
-// Momentum carryover strategy for /GC Gold Futures during the early
-// Asian session (6 PM - 9 PM EST). Checks if the previous NY session
-// closed with strong MACD momentum, then trades pullbacks to TEMA
-// during the first 3 hours of the Asian session.
+// Momentum continuation strategy on native 1-minute data. Enters when
+// MACD histogram confirms strong
+// directional momentum and TEMA crossover signals a continuation move.
 //
-// The idea: strong NY momentum often carries into early Asian hours.
-// When MACD histogram shows increasing momentum, wait for price to
-// pull back to TEMA and trade the continuation bounce.
-//
-// Entry Long:  Bullish MACD momentum AND Close crosses above TEMA
-//              (price bounced off TEMA pullback in bullish context)
-// Entry Short: Bearish MACD momentum AND TEMA crosses above Close
-//              (price rejected from TEMA bounce in bearish context)
+// Entry Long:  Bullish MACD momentum (histogram positive & increasing)
+//              AND Close crosses above TEMA
+// Entry Short: Bearish MACD momentum (histogram negative & decreasing)
+//              AND TEMA crosses above Close
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 macdFast   = Param("MACD Fast", 12, 5, 15, 1);
 macdSlow   = Param("MACD Slow", 26, 20, 35, 1);
 macdSignal = Param("MACD Signal", 9, 5, 15, 1);
-temaLength = Param("TEMA Length", 21, 5, 100, 1);
+temaLength = Param("TEMA Length", 8, 3, 50, 1);
 sdBars     = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult     = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
 
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
 
-// ---- TEMA Indicator (from indicator library) ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
 // ---- StdDev Exit Indicator (from indicator library) ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- MACD Calculation (AmiBroker built-ins) ----
 macdLine   = MACD(macdFast, macdSlow);
@@ -57,35 +54,21 @@ macdHist   = macdLine - signalLine;
 bullishMomentum = macdHist > 0 AND macdHist > Ref(macdHist, -1);
 bearishMomentum = macdHist < 0 AND macdHist < Ref(macdHist, -1);
 
-// ---- Early Asian Session Filter (first 3 hours: 6 PM - 9 PM EST) ----
-tn = TimeNum();
-earlyAsian = (tn >= 180000 AND tn <= 210000);
 
 // ---- Entry Signals ----
 // Long:  bullish MACD momentum + Close crosses above TEMA
 //        (price pulled back to TEMA and is now bouncing up = continuation)
 // Short: bearish MACD momentum + TEMA crosses above Close
 //        (price bounced to TEMA and is now falling back down = continuation)
-buySignal   = bullishMomentum AND Cross(Close, temas) AND earlyAsian;
-shortSignal = bearishMomentum AND Cross(temas, Close) AND earlyAsian;
+buySignal   = bullishMomentum AND Cross(Close, temas) AND isTargetSymbol;
+shortSignal = bearishMomentum AND Cross(temas, Close) AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m     = temas;
 exitDist1m = exitDistance;
 macdH1m    = macdHist;
 macdL1m    = macdLine;
 sigL1m     = signalLine;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m      = TimeFrameExpand(tema1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-macdH1m     = TimeFrameExpand(macdH1m, in1Minute);
-macdL1m     = TimeFrameExpand(macdL1m, in1Minute);
-sigL1m      = TimeFrameExpand(sigL1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;
@@ -111,10 +94,9 @@ Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | s
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 
-Title = Name() + " | B13 NY Momentum Carryover | TEMA(" + NumToStr(temaLength, 1.0) +
+Title = Name() + " | B13 MACD+TEMA Momentum | TEMA(" + NumToStr(temaLength, 1.0) +
         ") MACD(" + NumToStr(macdFast, 1.0) + "/" + NumToStr(macdSlow, 1.0) +
         "/" + NumToStr(macdSignal, 1.0) + ")" +
         " | Hist=" + NumToStr(macdH1m, 1.4) +
         " | SD x" + NumToStr(sdMult, 1.1) +
-        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
-        " | Early Asian (6-9PM)";
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

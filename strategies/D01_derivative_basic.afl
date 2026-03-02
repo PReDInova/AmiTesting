@@ -1,53 +1,70 @@
 // ===========================================
-// D01 - Derivative Basic Reversal
+// D01 - Derivative Zero-Cross Reversal
 // ===========================================
 //
-// Simple reversal strategy using the derivative lookback indicator.
-// Buys when the smoothed price (TEMA) forms a trough (derivative
-// crosses zero upward) and shorts when it forms a peak (derivative
-// crosses zero downward).
+// Simple reversal strategy using TEMA derivative zero-cross signals.
+// Buys when the first derivative crosses from negative to positive
+// (smoothed price momentum turning bullish) and shorts when it crosses
+// from positive to negative (momentum turning bearish).
 //
 // Entry:
-//   Buy  = validTrough (TEMA bottoming, confirmed by 2nd derivative)
-//   Short = validPeak  (TEMA topping, confirmed by 2nd derivative)
+//   Buy   = firstDeriv crosses above 0 (momentum shifting bullish)
+//   Short = firstDeriv crosses below 0 (momentum shifting bearish)
 //
 // Exit: StdDev-based stop loss and profit target
 //
-// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength   = Optimize("TEMA Length", 21, 3, 30, 1);
-lookback     = Optimize("Deriv Lookback", 8, 2, 21, 1);
-minSeparation = Param("Min Separation", 10, 3, 30, 1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength   = Param("TEMA Length", 8, 3, 30, 1);
+lookback     = Param("Deriv Lookback", 3, 2, 21, 1);
+minSeparation = Param("Min Separation", 3, 1, 30, 1);
 sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult       = Param("SD Multiplier", 1, 0.1, 5.0, 0.1);
 profitMult   = Param("Profit Target Mult", 1, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
 
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
 
-// ---- TEMA Indicator ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/tema.afl"
 
 // ---- Derivative Lookback Indicator ----
-#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/derivative_lookback.afl"
+// ---- Derivative Calculation (inline) ----
+firstDeriv  = (temas - Ref(temas, -lookback)) / lookback;
+secondDeriv = firstDeriv - Ref(firstDeriv, -lookback);
+
+// ---- Peak/Trough Detection ----
+slopeChangePosToNeg = Ref(firstDeriv, -1) > 0 AND firstDeriv <= 0;
+slopeChangeNegToPos = Ref(firstDeriv, -1) < 0 AND firstDeriv >= 0;
+isPeak   = slopeChangePosToNeg AND (secondDeriv < 0);
+isTrough = slopeChangeNegToPos AND (secondDeriv > 0);
+
+// ---- Min-separation filter ----
+validPeak   = isPeak AND BarsSince(Ref(isPeak, -1)) >= minSeparation AND BarsSince(Ref(isTrough, -1)) >= minSeparation;
+validTrough = isTrough AND BarsSince(Ref(isTrough, -1)) >= minSeparation AND BarsSince(Ref(isPeak, -1)) >= minSeparation;
+
+// ---- Peak/Trough levels ----
+peakLevel = ValueWhen(validPeak, temas);
+troughLevel = ValueWhen(validTrough, temas);
 
 // ---- StdDev Exit Indicator ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- Entry Signals ----
-buySignal   = validTrough;
-shortSignal = validPeak;
+buySignal   = Cross(firstDeriv, 0) AND isTargetSymbol;
+shortSignal = Cross(0, firstDeriv) AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m        = temas;
 firstDeriv1m  = firstDeriv;
 secondDeriv1m = secondDeriv;
@@ -57,19 +74,6 @@ peakLevel1m   = peakLevel;
 troughLevel1m = troughLevel;
 exitDist1m    = exitDistance;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m        = TimeFrameExpand(tema1m, in1Minute);
-firstDeriv1m  = TimeFrameExpand(firstDeriv1m, in1Minute);
-secondDeriv1m = TimeFrameExpand(secondDeriv1m, in1Minute);
-validPeak1m   = TimeFrameExpand(validPeak1m, in1Minute);
-validTrough1m = TimeFrameExpand(validTrough1m, in1Minute);
-peakLevel1m   = TimeFrameExpand(peakLevel1m, in1Minute);
-troughLevel1m = TimeFrameExpand(troughLevel1m, in1Minute);
-exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Entry signals ----
 Buy   = buySignal;
@@ -104,7 +108,7 @@ PlotShapes(validTrough1m * shapeSmallUpTriangle, colorLime, 0, Low, -20);
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 
-Title = Name() + " | D01 Derivative Basic" +
+Title = Name() + " | D01 Derivative Zero-Cross" +
         " | TEMA(" + NumToStr(temaLength, 1.0) + ")" +
         " | Deriv(" + NumToStr(lookback, 1.0) + "/" + NumToStr(minSeparation, 1.0) + ")" +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +

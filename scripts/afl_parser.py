@@ -146,20 +146,25 @@ _PARAM_RULES = [
     ([("smoothing",), ("length",)], "tema", "period"),
     # ADX
     ([("adx",), ("period",)], "adx", "period"),
+    ([("adx",), ("threshold",)], "adx", "threshold"),
     # Stochastic -- order matters: check %d before %k since %k rule uses "period" fallback
     ([("stoch",), ("%d",)], "stochastic", "d_period"),
     ([("stoch",), ("smooth",)], "stochastic", "smooth"),
     ([("stoch",), ("%k", "period")], "stochastic", "k_period"),
+    ([("stoch",), ("overbought",)], "stochastic", "overbought"),
+    ([("stoch",), ("oversold",)], "stochastic", "oversold"),
     # Bollinger Bands
     ([("bb",), ("period",)], "bbands", "period"),
     ([("bb",), ("std",)], "bbands", "std_dev"),
     # RSI
     ([("rsi",), ("period",)], "rsi", "period"),
+    ([("rsi",), ("overbought",)], "rsi", "overbought"),
+    ([("rsi",), ("oversold",)], "rsi", "oversold"),
     # Donchian
     ([("donchian",), ("period",)], "donchian", "period"),
-    # StdDev Bands
+    # StdDev Bands -- "sd" covers the "SD Multiplier" naming variant
     ([("stddev", "stdev"), ("lookback", "bars")], "stdev_bands", "lookback"),
-    ([("stddev", "stdev"), ("mult",)], "stdev_bands", "multiplier"),
+    ([("stddev", "stdev", "sd"), ("mult",)], "stdev_bands", "multiplier"),
     # ATR
     ([("atr",), ("period",)], "atr", "period"),
     # Derivative
@@ -274,6 +279,28 @@ def extract_strategy_indicators(afl_content: str) -> list[dict]:
         "Extracted %d strategy indicators from AFL content.", len(indicators)
     )
     return indicators
+
+
+def extract_strategy_params(
+    afl_content: str,
+    indicator_configs: list[dict] | None = None,
+) -> list[dict]:
+    """Return AFL ``Param()``/``Optimize()`` calls not mapped to any indicator.
+
+    These are strategy-level parameters (profit targets, entry filters,
+    regime thresholds, etc.) that don't correspond to a chart indicator
+    but are still important for reviewing a backtest.
+
+    Each item is a dict with ``name``, ``default``, ``min``, ``max``,
+    ``step``, and ``type`` (``"param"`` or ``"optimize"``).
+    """
+    all_params = parse_afl_params(afl_content)
+    if indicator_configs is None:
+        indicator_configs = extract_strategy_indicators(afl_content)
+    mapped_names: set[str] = set()
+    for cfg in indicator_configs:
+        mapped_names.update(cfg.get("param_mapping", {}).values())
+    return [p for p in all_params if p["name"] not in mapped_names]
 
 
 # AmiBroker TimeFrameSet() constant -> seconds

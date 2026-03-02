@@ -2,44 +2,44 @@
 // B06 - Session VWAP Mean Reversion Enhanced
 // ===========================================
 //
-// Enhanced VWAP mean reversion strategy for /GC Gold Futures during the
-// Asian session (6 PM - 3 AM EST). Extends basic VWAP reversion by adding
+// Enhanced VWAP mean reversion strategy on native 1-minute data. Extends basic VWAP reversion by adding
 // TEMA derivative confirmation. Enters long when price is below a selected
 // VWAP deviation band but TEMA is turning upward (momentum shifting back
 // toward mean). Enters short when price is above a selected upper band
 // but TEMA is turning downward.
 //
-// Entry Long:  Close < entry lower band AND TEMA derivative > 0 AND Asian session
-// Entry Short: Close > entry upper band AND TEMA derivative < 0 AND Asian session
+// Entry Long:  Close < entry lower band AND TEMA derivative >= 0
+// Entry Short: Close > entry upper band AND TEMA derivative <= 0
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength  = Param("TEMA Length", 21, 5, 100, 1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength  = Param("TEMA Length", 8, 3, 50, 1);
 entrySigma  = Param("Entry Sigma", 1, 1, 3, 1);
 sdBars      = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult      = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 derivLookback = Param("TEMA Deriv Lookback", 3, 1, 10, 1);
 profitMult  = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- VWAP Clouds Indicator (from indicator library) ----
+sessionResetTime = 93000;  // Reset VWAP at US market open (9:30 AM EST)
 vwStdev1 = 1;
 vwStdev2 = 2;
 vwStdev3 = 3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
-// ---- TEMA Indicator (from indicator library) ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
 
 // ---- TEMA Derivative (momentum confirmation) ----
 temaDerivative = temas - Ref(temas, -derivLookback);
@@ -48,21 +48,19 @@ temaDerivative = temas - Ref(temas, -derivLookback);
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- Select entry band level based on entrySigma parameter ----
 entryLower = IIf(entrySigma == 1, s1, IIf(entrySigma == 2, s2, s3));
 entryUpper = IIf(entrySigma == 1, r1, IIf(entrySigma == 2, r2, r3));
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (filtered by session, VWAP bands, and TEMA derivative) ----
-buySignal   = Close < entryLower AND temaDerivative > 0 AND asianSession;
-shortSignal = Close > entryUpper AND temaDerivative < 0 AND asianSession;
+buySignal   = Close < entryLower AND temaDerivative >= 0 AND isTargetSymbol;
+shortSignal = Close > entryUpper AND temaDerivative <= 0 AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 vwap1m       = VWAP;
 entryUpper1m = entryUpper;
 entryLower1m = entryLower;
@@ -70,17 +68,6 @@ tema1m       = temas;
 temaDeriv1m  = temaDerivative;
 exitDist1m   = exitDistance;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-vwap1m       = TimeFrameExpand(vwap1m, in1Minute);
-entryUpper1m = TimeFrameExpand(entryUpper1m, in1Minute);
-entryLower1m = TimeFrameExpand(entryLower1m, in1Minute);
-tema1m       = TimeFrameExpand(tema1m, in1Minute);
-temaDeriv1m  = TimeFrameExpand(temaDeriv1m, in1Minute);
-exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

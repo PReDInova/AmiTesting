@@ -2,34 +2,31 @@
 // B03 - Bollinger Band + RSI Mean Reversion
 // ===========================================
 //
-// Mean reversion strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Fades moves to Bollinger Band extremes when RSI
+// Mean reversion strategy on native 1-minute data. Fades moves to Bollinger Band extremes when RSI
 // confirms overextension. Enters long when price touches the lower band
 // with oversold RSI, and short when price touches the upper band with
 // overbought RSI.
 //
-// Entry Long:  Close <= Lower BB AND RSI < Oversold AND Asian session
-// Entry Short: Close >= Upper BB AND RSI > Overbought AND Asian session
+// Entry Long:  Close <= Lower BB AND RSI < Oversold
+// Entry Short: Close >= Upper BB AND RSI > Overbought
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 bbPeriod  = Param("BB Period", 20, 10, 50, 1);
-bbStdDev  = Param("BB StdDev", 2.0, 1.0, 3.0, 0.1);
+bbStdDev  = Param("BB StdDev", 1.5, 0.5, 3.0, 0.1);
 rsiPeriod = Param("RSI Period", 14, 5, 30, 1);
-rsiOB     = Param("RSI Overbought", 70, 60, 85, 5);
-rsiOS     = Param("RSI Oversold", 30, 15, 40, 5);
+rsiOB     = Param("RSI Overbought", 60, 55, 85, 5);
+rsiOS     = Param("RSI Oversold", 40, 15, 45, 5);
 sdBars    = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult    = Param("StdDev Multiplier", 1.5, 0.5, 3.0, 0.1);
 profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Bollinger Bands (AmiBroker built-ins) ----
 upperBB  = BBandTop(Close, bbPeriod, bbStdDev);
@@ -43,33 +40,21 @@ rsiVal = RSI(rsiPeriod);
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (filtered by session, BB extremes, and RSI) ----
-buySignal   = Close <= lowerBB AND rsiVal < rsiOS AND asianSession;
-shortSignal = Close >= upperBB AND rsiVal > rsiOB AND asianSession;
+buySignal   = Close <= lowerBB AND rsiVal < rsiOS AND isTargetSymbol;
+shortSignal = Close >= upperBB AND rsiVal > rsiOB AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 upperBB1m  = upperBB;
 lowerBB1m  = lowerBB;
 middleBB1m = middleBB;
 rsi1m      = rsiVal;
 exitDist1m = exitDistance;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-upperBB1m   = TimeFrameExpand(upperBB1m, in1Minute);
-lowerBB1m   = TimeFrameExpand(lowerBB1m, in1Minute);
-middleBB1m  = TimeFrameExpand(middleBB1m, in1Minute);
-rsi1m       = TimeFrameExpand(rsi1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

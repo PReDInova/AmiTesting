@@ -2,33 +2,30 @@
 // B07 - Donchian Channel Breakout
 // ===========================================
 //
-// Breakout strategy for /GC Gold Futures that computes a Donchian Channel
-// over Asian session bars and trades breakouts during London hours
-// (3 AM - 12 PM EST). Uses ATR-based buffer to filter false breakouts and
-// ADX filter to confirm trending conditions before entry.
+// Breakout strategy on native 1-minute data.
+// Uses ATR-based buffer to filter false breakouts and ADX filter to confirm
+// trending conditions before entry.
 //
-// Entry Long:  Close > prior bar Donchian High + ATR buffer AND ADX > threshold AND London session
-// Entry Short: Close < prior bar Donchian Low - ATR buffer AND ADX > threshold AND London session
+// Entry Long:  Close > previous Donchian High + ATR buffer AND ADX > threshold
+// Entry Short: Close < previous Donchian Low - ATR buffer AND ADX > threshold
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-dcPeriod      = Param("Donchian Period", 32, 15, 60, 1);
-atrBufferMult = Param("ATR Buffer Mult", 0.5, 0.1, 2.0, 0.1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+dcPeriod      = Param("Donchian Period", 20, 10, 60, 1);
+atrBufferMult = Param("ATR Buffer Mult", 0.2, 0.1, 2.0, 0.1);
 adxPer        = Param("ADX Period", 14, 5, 50, 1);
-adxThreshold  = Param("ADX Threshold", 20, 10, 35, 1);
+adxThreshold  = Param("ADX Threshold", 12, 5, 35, 1);
 sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult        = Param("StdDev Multiplier", 1.5, 0.5, 3.0, 0.1);
 atrPer        = Param("ATR Period", 14, 5, 50, 1);
 profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Donchian Channel (AmiBroker built-ins) ----
 dcHigh = HHV(High, dcPeriod);
@@ -52,33 +49,22 @@ ADXvalue    = Wilders(DX, adxPer);
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
-// ---- London Session Filter (breakout of Asian consolidation) ----
-tn = TimeNum();
-londonSession = tn >= 030000 AND tn <= 120000;
 
 // ---- Entry Signals (use Ref to avoid look-ahead bias) ----
 trendConfirmed = ADXvalue > adxThreshold;
 
-buySignal   = Close > Ref(dcHigh, -1) + entryBuffer AND trendConfirmed AND londonSession;
-shortSignal = Close < Ref(dcLow, -1) - entryBuffer AND trendConfirmed AND londonSession;
+buySignal   = Close > Ref(dcHigh, -1) + entryBuffer AND trendConfirmed AND isTargetSymbol;
+shortSignal = Close < Ref(dcLow, -1) - entryBuffer AND trendConfirmed AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 dcHigh1m   = dcHigh;
 dcLow1m    = dcLow;
 adx1m      = ADXvalue;
 exitDist1m = exitDistance;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-dcHigh1m    = TimeFrameExpand(dcHigh1m, in1Minute);
-dcLow1m     = TimeFrameExpand(dcLow1m, in1Minute);
-adx1m       = TimeFrameExpand(adx1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

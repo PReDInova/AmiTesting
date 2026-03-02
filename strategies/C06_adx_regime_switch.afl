@@ -2,8 +2,7 @@
 // C06 - ADX Regime Switch (Auto Trend/Range)
 // ===========================================
 //
-// Adaptive strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Automatically switches between trend-following
+// Adaptive strategy on native 1-minute data. Automatically switches between trend-following
 // and mean-reversion modes based on ADX regime detection.
 //
 // ADX > trendThreshold: Trend mode - use CZ breakout logic
@@ -16,9 +15,12 @@
 // Exit: StdDev-based stops with dynamic multiplier
 //       (wider for trend trades, tighter for range trades)
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 trendThreshold = Param("Trend ADX Threshold", 25, 18, 35, 1);
 rangeThreshold = Param("Range ADX Threshold", 20, 10, 25, 1);
 trendSdMult    = Param("Trend SD Mult", 1.5, 1.0, 3.0, 0.5);
@@ -28,11 +30,6 @@ temaLength     = Param("TEMA Length", 21, 5, 100, 1);
 sdBars         = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 profitMult     = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Consolidation Zone Indicator (for trend mode breakouts) ----
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
@@ -43,16 +40,20 @@ vwStdev2 = 2;
 vwStdev3 = 3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
-// ---- TEMA Indicator ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
 
 // ---- StdDev Exit Indicator (base multiplier = 1.0, we apply dynamic mult ourselves) ----
 sdMultiplier = 1.0;
 sdLookback = sdBars;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
 adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
@@ -68,9 +69,6 @@ ADXvalue    = Wilders(DX, adxPer);
 trendMode = ADXvalue > trendThreshold;
 rangeMode = ADXvalue < rangeThreshold;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Trend Mode Entries (CZ breakout) ----
 buyTrend   = czBreakoutUp AND trendMode;
@@ -81,14 +79,13 @@ buyRange   = Ref(Close, -1) <= s1 AND Close > s1 AND rangeMode;
 shortRange = Ref(Close, -1) >= r1 AND Close < r1 AND rangeMode;
 
 // ---- Combined Entry Signals ----
-buySignal   = (buyTrend OR buyRange) AND asianSession;
-shortSignal = (shortTrend OR shortRange) AND asianSession;
+buySignal   = (buyTrend OR buyRange) AND isTargetSymbol;
+shortSignal = (shortTrend OR shortRange) AND isTargetSymbol;
 
 // ---- Dynamic Exit Distance ----
 // Wider stops for trend trades, tighter for range trades
 exitDist1m = IIf(trendMode, exitStdDev * trendSdMult, IIf(rangeMode, exitStdDev * rangeSdMult, exitStdDev));
 
-// ---- Save computed arrays before restoring timeframe ----
 adx1m          = ADXvalue;
 pdi1m          = plusDI;
 mdi1m          = minusDI;
@@ -100,22 +97,6 @@ s1_1m          = s1;
 czHigh1m       = czHigh;
 czLow1m        = czLow;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-adx1m       = TimeFrameExpand(adx1m, in1Minute);
-pdi1m       = TimeFrameExpand(pdi1m, in1Minute);
-mdi1m       = TimeFrameExpand(mdi1m, in1Minute);
-trendMode1m = TimeFrameExpand(trendMode1m, in1Minute);
-rangeMode1m = TimeFrameExpand(rangeMode1m, in1Minute);
-vwap1m      = TimeFrameExpand(vwap1m, in1Minute);
-r1_1m       = TimeFrameExpand(r1_1m, in1Minute);
-s1_1m       = TimeFrameExpand(s1_1m, in1Minute);
-czHigh1m    = TimeFrameExpand(czHigh1m, in1Minute);
-czLow1m     = TimeFrameExpand(czLow1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

@@ -2,8 +2,7 @@
 // A01 - TEMA + ADX Trend Filter
 // ===========================================
 //
-// Trend-following strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Uses TEMA crossover signals confirmed by ADX trend
+// Trend-following strategy on native 1-minute data. Uses TEMA crossover signals confirmed by ADX trend
 // strength. Only enters trades when ADX indicates a strong trend is present
 // and directional indicators confirm the direction.
 //
@@ -12,32 +11,34 @@
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength   = Param("TEMA Length", 21, 5, 100, 1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength   = Param("TEMA Length", 8, 3, 50, 1);
 adxPer       = Param("ADX Period", 14, 5, 50, 1);
-adxThreshold = Param("ADX Threshold", 25, 10, 40, 1);
+adxThreshold = Param("ADX Threshold", 15, 5, 40, 1);
 sdBars       = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult       = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult   = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
 
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
 
-// ---- TEMA Indicator (from indicator library) ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
 // ---- StdDev Exit Indicator (from indicator library) ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- ADX Calculation (inline to avoid Plot() calls from adx.afl) ----
 adxTR      = Max(High - Low, Max(abs(High - Ref(Close, -1)), abs(Low - Ref(Close, -1))));
@@ -49,33 +50,19 @@ minusDI     = 100 * Wilders(adxMinusDM, adxPer) / adxATR;
 DX          = 100 * abs(plusDI - minusDI) / (plusDI + minusDI);
 ADXvalue    = Wilders(DX, adxPer);
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (filtered by session and ADX trend) ----
 trendConfirmed = ADXvalue > adxThreshold;
 
-buySignal   = Cross(temas, Close) AND trendConfirmed AND plusDI > minusDI AND asianSession;
-shortSignal = Cross(Close, temas) AND trendConfirmed AND minusDI > plusDI AND asianSession;
+buySignal   = Cross(temas, Close) AND trendConfirmed AND plusDI > minusDI AND isTargetSymbol;
+shortSignal = Cross(Close, temas) AND trendConfirmed AND minusDI > plusDI AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m     = temas;
 exitDist1m = exitDistance;
 adx1m      = ADXvalue;
 pdi1m      = plusDI;
 mdi1m      = minusDI;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m      = TimeFrameExpand(tema1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-adx1m       = TimeFrameExpand(adx1m, in1Minute);
-pdi1m       = TimeFrameExpand(pdi1m, in1Minute);
-mdi1m       = TimeFrameExpand(mdi1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

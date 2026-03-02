@@ -2,8 +2,7 @@
 // A03 - Consolidation Zone Breakout
 // ===========================================
 //
-// Breakout strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Detects consolidation zones using TEMA derivative
+// Breakout strategy on native 1-minute data. Detects consolidation zones using TEMA derivative
 // flatness and price range tightness, then trades the breakout when
 // price exits the zone with momentum.
 //
@@ -13,9 +12,12 @@
 // Exit: StdDev-based symmetric stops with wider multiplier (1.5)
 //       to give breakout trades room to develop
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 czTemaLength    = Param("CZ TEMA Length", 21, 5, 50, 1);
 czFlatThreshold = Param("CZ Flat Threshold", 0.50, 0.05, 2.0, 0.05);
 czMaxRangeTicks = Param("CZ Max Range (ticks)", 80, 20, 200, 5);
@@ -24,30 +26,19 @@ sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 1.5, 0.1, 5.0, 0.1);
 profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Consolidation Zone Indicator (from indicator library) ----
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
 
-// ---- StdDev Exit Indicator (from indicator library) ----
-sdLookback   = sdBars;
-sdMultiplier = sdMult;
-sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdBars);
+exitDistance = sdMult * exitStdDev;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals (filtered by session) ----
-buySignal   = czBreakoutUp AND asianSession;
-shortSignal = czBreakoutDown AND asianSession;
+buySignal   = czBreakoutUp AND isTargetSymbol;
+shortSignal = czBreakoutDown AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 exitDist1m    = exitDistance;
 czHigh1m      = czHigh;
 czLow1m       = czLow;
@@ -55,17 +46,6 @@ czMid1m       = czMid;
 isConsol1m    = isConsolidating;
 czStrength1m  = czStrength;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
-czHigh1m     = TimeFrameExpand(czHigh1m, in1Minute);
-czLow1m      = TimeFrameExpand(czLow1m, in1Minute);
-czMid1m      = TimeFrameExpand(czMid1m, in1Minute);
-isConsol1m   = TimeFrameExpand(isConsol1m, in1Minute);
-czStrength1m = TimeFrameExpand(czStrength1m, in1Minute);
-buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

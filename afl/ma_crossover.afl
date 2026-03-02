@@ -1,1 +1,117 @@
-Buy=1;Sell=0;
+// ===========================================
+// C05 - TEMA Contrarian + VWAP Fade
+// ===========================================
+//
+// Two-phase contrarian strategy for NQ (Nasdaq E-mini Futures) on native
+// 1-minute data. Combines TEMA crossover signals with VWAP mean reversion.
+//
+// Phase 1 (Contrarian): TEMA crosses above Close (price dipped below TEMA)
+//   triggers buy; Close crosses above TEMA triggers short.
+//
+// Phase 2 (VWAP Fade): When price has moved away from VWAP, fade back
+//   toward the mean using TEMA crossover confirmation.
+//   BUY:  Close below VWAP + TEMA buy signal (dip starting to recover)
+//   SHORT: Close above VWAP + TEMA short signal (pop starting to fade)
+//
+// Entry Long:  Phase1 OR Phase2 buy signal
+// Entry Short: Phase1 OR Phase2 short signal
+//
+// Exit: StdDev-based symmetric stop loss and profit target
+//
+// Adapted for NQ (Nasdaq E-mini Futures) on native 1-minute data.
+
+// ---- Strategy Parameters ----
+// ---- Symbol filter (NQ only) ----
+isTargetSymbol = Name() == "NQ";
+
+temaLength    = Param("TEMA Length", 8, 3, 50, 1);
+fadeThreshold = Param("Min Fade Move USD", 3, 1, 10, 1);
+sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
+sdMult        = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
+profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
+
+
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
+
+// ---- VWAP Clouds Indicator ----
+sessionResetTime = 93000;  // Reset VWAP at US market open (9:30 AM EST)
+vwStdev1 = 1;
+vwStdev2 = 2;
+vwStdev3 = 3;
+#include_once "C:/Users/prestondinova/Documents/AmiTesting/indicators/vwap_clouds.afl"
+
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdBars);
+exitDistance = sdMult * exitStdDev;
+
+// ---- Session Filters ----
+
+
+// Cross(temas, Close) = TEMA crosses above Close = price dropped below TEMA = BUY
+// Cross(Close, temas) = Close crosses above TEMA = SHORT
+buyPhase1   = Cross(temas, Close);
+shortPhase1 = Cross(Close, temas);
+
+
+// fade the Asian bearish move back toward VWAP
+buyPhase2   = Close < VWAP AND Cross(temas, Close);
+
+
+// fade the Asian bullish move back toward VWAP
+shortPhase2 = Close > VWAP AND Cross(Close, temas);
+
+// ---- Combined Entry Signals ----
+buySignal   = (buyPhase1 OR buyPhase2) AND isTargetSymbol;
+shortSignal = (shortPhase1 OR shortPhase2) AND isTargetSymbol;
+
+tema1m     = temas;
+vwap1m     = VWAP;
+r1_1m      = r1;
+s1_1m      = s1;
+exitDist1m = exitDistance;
+
+
+// ---- Assign Entry/Exit Signals ----
+Buy   = buySignal;
+Sell  = 0;   // exits handled by ApplyStop
+Short = shortSignal;
+Cover = 0;   // exits handled by ApplyStop
+
+// ---- StdDev-based stop loss and profit target ----
+ApplyStop(stopTypeLoss, stopModePoint, exitDist1m);
+ApplyStop(stopTypeProfit, stopModePoint, exitDist1m * profitMult);
+
+// ---- Position sizing: 1 contract ----
+SetPositionSize(1, spsShares);
+
+// ---- Remove duplicate signals ----
+Buy   = ExRem(Buy, Short);
+Short = ExRem(Short, Buy);
+
+// ---- Visualization ----
+Plot(Close, "Price", colorDefault, styleCandle);
+Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | styleThick);
+Plot(vwap1m, "VWAP", colorYellow, styleLine | styleThick);
+Plot(r1_1m, "VWAP +1s", colorLightGrey, styleDashed | styleNoRescale);
+Plot(s1_1m, "VWAP -1s", colorLightGrey, styleDashed | styleNoRescale);
+
+PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
+PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
+
+Title = Name() + " | C05 TEMA+VWAP Fade | TEMA(" + NumToStr(temaLength, 1.0) +
+        ") FadeThresh=" + NumToStr(fadeThreshold, 1.0) + " USD" +
+        " | VWAP=" + NumToStr(vwap1m, 1.2) +
+        " | SD x" + NumToStr(sdMult, 1.1) +
+        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
+        " | NQ";
+
+// --- Date range filter (injected by pipeline) ---
+_pipelineDN = DateNum();
+_pipelineInRange = (_pipelineDN >= 1241113) * (_pipelineDN <= 1250213);
+Buy   = Buy * _pipelineInRange;
+Short = Short * _pipelineInRange;

@@ -2,8 +2,7 @@
 // A05 - VWAP Band Bounce
 // ===========================================
 //
-// Mean-reversion strategy for /GC Gold Futures during the Asian session
-// (6 PM - 3 AM EST). Trades bounces off VWAP standard deviation bands.
+// Mean-reversion strategy on native 1-minute data. Trades bounces off VWAP standard deviation bands.
 // When price touches or penetrates a VWAP band and then reverses back
 // through it, this signals a mean reversion opportunity back toward VWAP.
 //
@@ -17,24 +16,23 @@
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 entryBand  = Param("Entry Band Sigma", 1, 1, 3, 1);
-vwapSigma1 = Param("VWAP Sigma 1", 1.0, 0.5, 2.0, 0.1);
-vwapSigma2 = Param("VWAP Sigma 2", 2.0, 1.0, 3.0, 0.1);
-vwapSigma3 = Param("VWAP Sigma 3", 3.0, 2.0, 4.0, 0.1);
+vwapSigma1 = Param("VWAP Sigma 1", 0.5, 0.1, 2.0, 0.1);
+vwapSigma2 = Param("VWAP Sigma 2", 1.0, 0.5, 3.0, 0.1);
+vwapSigma3 = Param("VWAP Sigma 3", 1.5, 1.0, 4.0, 0.1);
 sdBars     = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult     = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- VWAP Clouds Indicator (from indicator library) ----
+sessionResetTime = 93000;  // Reset VWAP at US market open (9:30 AM EST)
 vwStdev1 = vwapSigma1;
 vwStdev2 = vwapSigma2;
 vwStdev3 = vwapSigma3;
@@ -44,24 +42,22 @@ vwStdev3 = vwapSigma3;
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
 // ---- Select entry band based on parameter ----
 entryUpper = IIf(entryBand == 1, r1, IIf(entryBand == 2, r2, r3));
 entryLower = IIf(entryBand == 1, s1, IIf(entryBand == 2, s2, s3));
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Entry Signals ----
 // Long: price was at or below lower band, now crosses back above (bounce)
-buySignal   = Ref(Close, -1) <= entryLower AND Close > entryLower AND asianSession;
+buySignal   = Ref(Close, -1) <= entryLower AND Close > entryLower AND isTargetSymbol;
 
 // Short: price was at or above upper band, now crosses back below (rejection)
-shortSignal = Ref(Close, -1) >= entryUpper AND Close < entryUpper AND asianSession;
+shortSignal = Ref(Close, -1) >= entryUpper AND Close < entryUpper AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 exitDist1m   = exitDistance;
 vwap1m       = VWAP;
 entryUpper1m = entryUpper;
@@ -73,21 +69,6 @@ s2_1m        = s2;
 r3_1m        = r3;
 s3_1m        = s3;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-exitDist1m   = TimeFrameExpand(exitDist1m, in1Minute);
-vwap1m       = TimeFrameExpand(vwap1m, in1Minute);
-entryUpper1m = TimeFrameExpand(entryUpper1m, in1Minute);
-entryLower1m = TimeFrameExpand(entryLower1m, in1Minute);
-r1_1m        = TimeFrameExpand(r1_1m, in1Minute);
-s1_1m        = TimeFrameExpand(s1_1m, in1Minute);
-r2_1m        = TimeFrameExpand(r2_1m, in1Minute);
-s2_1m        = TimeFrameExpand(s2_1m, in1Minute);
-r3_1m        = TimeFrameExpand(r3_1m, in1Minute);
-s3_1m        = TimeFrameExpand(s3_1m, in1Minute);
-buySignal    = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal  = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;

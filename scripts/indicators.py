@@ -195,7 +195,7 @@ def compute_derivative(bars: list[dict], period: int = 21,
 
 
 @register("adx")
-def compute_adx(bars: list[dict], period: int = 14, **kwargs) -> dict:
+def compute_adx(bars: list[dict], period: int = 14, threshold: int | float | None = None, **kwargs) -> dict:
     """Average Directional Index with +DI/-DI."""
     times, high = _bars_to_series(bars, "high")
     _, low = _bars_to_series(bars, "low")
@@ -232,7 +232,7 @@ def compute_adx(bars: list[dict], period: int = 14, **kwargs) -> dict:
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
     adx = dx.ewm(alpha=alpha, adjust=False).mean()
 
-    return {
+    result = {
         "type": "adx",
         "label": f"ADX({period})",
         "params": {"period": period},
@@ -242,6 +242,10 @@ def compute_adx(bars: list[dict], period: int = 14, **kwargs) -> dict:
             "minus_di": _series_to_line_data(times, minus_di),
         },
     }
+    if threshold is not None:
+        result["params"]["threshold"] = float(threshold)
+        result["threshold"] = float(threshold)
+    return result
 
 
 @register("vwap")
@@ -303,7 +307,9 @@ def compute_vwap(bars: list[dict], session_reset_hour: int = 18, **kwargs) -> di
 
 
 @register("rsi")
-def compute_rsi(bars: list[dict], period: int = 14, **kwargs) -> dict:
+def compute_rsi(bars: list[dict], period: int = 14,
+                overbought: int | float | None = None,
+                oversold: int | float | None = None, **kwargs) -> dict:
     """Relative Strength Index."""
     times, close = _bars_to_series(bars)
     delta = close.diff()
@@ -316,17 +322,26 @@ def compute_rsi(bars: list[dict], period: int = 14, **kwargs) -> dict:
     rs = avg_gain / avg_loss
     rsi = 100 - 100 / (1 + rs)
 
-    return {
+    result = {
         "type": "rsi",
         "label": f"RSI({period})",
         "params": {"period": period},
         "data": _series_to_line_data(times, rsi),
     }
+    if overbought is not None:
+        result["params"]["overbought"] = float(overbought)
+        result["overbought"] = float(overbought)
+    if oversold is not None:
+        result["params"]["oversold"] = float(oversold)
+        result["oversold"] = float(oversold)
+    return result
 
 
 @register("stochastic")
 def compute_stochastic(bars: list[dict], k_period: int = 14, d_period: int = 3,
-                       smooth: int = 3, **kwargs) -> dict:
+                       smooth: int = 3,
+                       overbought: int | float | None = None,
+                       oversold: int | float | None = None, **kwargs) -> dict:
     """Stochastic Oscillator (%K, %D)."""
     times, high = _bars_to_series(bars, "high")
     _, low = _bars_to_series(bars, "low")
@@ -339,7 +354,7 @@ def compute_stochastic(bars: list[dict], k_period: int = 14, d_period: int = 3,
     k = raw_k.rolling(window=smooth).mean()
     d = k.rolling(window=d_period).mean()
 
-    return {
+    result = {
         "type": "stochastic",
         "label": f"Stoch({k_period},{d_period},{smooth})",
         "params": {"k_period": k_period, "d_period": d_period, "smooth": smooth},
@@ -348,6 +363,13 @@ def compute_stochastic(bars: list[dict], k_period: int = 14, d_period: int = 3,
             "d": _series_to_line_data(times, d),
         },
     }
+    if overbought is not None:
+        result["params"]["overbought"] = float(overbought)
+        result["overbought"] = float(overbought)
+    if oversold is not None:
+        result["params"]["oversold"] = float(oversold)
+        result["oversold"] = float(oversold)
+    return result
 
 
 @register("donchian")

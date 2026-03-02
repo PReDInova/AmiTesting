@@ -1,73 +1,73 @@
 // ===========================================
-// A08 - Derivative Peak/Trough Reversal Strategy
+// A08 - Derivative Zero-Cross Reversal
 // ===========================================
 //
-// Counter-trend strategy that enters at TEMA turning points detected
-// by first and second derivative analysis. When TEMA peaks (slope goes
-// from positive to negative), short. When TEMA troughs (slope goes
-// from negative to positive), go long.
+// Counter-trend strategy that enters when the TEMA first derivative
+// crosses zero, signaling a shift in smoothed price momentum. Buys when
+// the derivative crosses from negative to positive (price turning up)
+// and shorts when it crosses from positive to negative (price turning down).
 //
-// Entry Long:  validTrough (TEMA bottoming -> buy the reversal)
-// Entry Short: validPeak   (TEMA topping  -> sell the reversal)
+// Entry Long:  firstDeriv crosses above 0 (TEMA momentum turning bullish)
+// Entry Short: firstDeriv crosses below 0 (TEMA momentum turning bearish)
 //
 // Exit: StdDev-based stop loss and profit target
 //
-// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength    = Param("TEMA Length", 21, 5, 100, 1);
-lookback      = Param("Deriv Lookback", 8, 3, 21, 1);
-minSeparation = Param("Min Separation", 10, 3, 30, 1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength    = Param("TEMA Length", 8, 3, 50, 1);
+lookback      = Param("Deriv Lookback", 3, 2, 21, 1);
+minSeparation = Param("Min Separation", 3, 1, 30, 1);
 sdBars        = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult        = Param("SD Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult    = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
 
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
 
-// ---- TEMA Indicator (must be included first - derivative_lookback needs temas) ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
 
-// ---- Derivative Lookback Indicator ----
-// Requires: temas (array), lookback (int), minSeparation (int), sessionResetTime
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\derivative_lookback.afl"
+// ---- Derivative Calculation (inline) ----
+firstDeriv  = (temas - Ref(temas, -lookback)) / lookback;
+secondDeriv = firstDeriv - Ref(firstDeriv, -lookback);
 
-// ---- StdDev Exit Indicator ----
-sdLookback   = sdBars;
-sdMultiplier = sdMult;
-sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- Peak/Trough Detection ----
+slopeChangePosToNeg = Ref(firstDeriv, -1) > 0 AND firstDeriv <= 0;
+slopeChangeNegToPos = Ref(firstDeriv, -1) < 0 AND firstDeriv >= 0;
+isPeak   = slopeChangePosToNeg AND (secondDeriv < 0);
+isTrough = slopeChangeNegToPos AND (secondDeriv > 0);
 
-// ---- Save computed arrays before restoring timeframe ----
+// ---- Min-separation filter ----
+validPeak   = isPeak AND BarsSince(Ref(isPeak, -1)) >= minSeparation AND BarsSince(Ref(isTrough, -1)) >= minSeparation;
+validTrough = isTrough AND BarsSince(Ref(isTrough, -1)) >= minSeparation AND BarsSince(Ref(isPeak, -1)) >= minSeparation;
+
+// ---- Peak/Trough levels ----
+peakLevel = ValueWhen(validPeak, temas);
+troughLevel = ValueWhen(validTrough, temas);
+
+
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdBars);
+exitDistance = sdMult * exitStdDev;
+
 tema1m         = temas;
 validPeak1m    = validPeak;
 validTrough1m  = validTrough;
 exitDist1m     = exitDistance;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
-// ---- Derivative Reversal Entry Signals ----
-// Long:  TEMA bottoming (validTrough) -> counter-trend buy
-// Short: TEMA topping   (validPeak)   -> counter-trend sell
-buySignal   = asianSession AND validTrough1m;
-shortSignal = asianSession AND validPeak1m;
+// ---- Derivative Zero-Cross Entry Signals ----
+// Long:  derivative crosses zero upward -> momentum shifting bullish
+// Short: derivative crosses zero downward -> momentum shifting bearish
+buySignal   = Cross(firstDeriv, 0) AND isTargetSymbol;
+shortSignal = Cross(0, firstDeriv) AND isTargetSymbol;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m        = TimeFrameExpand(tema1m, in1Minute);
-validPeak1m   = TimeFrameExpand(validPeak1m, in1Minute);
-validTrough1m = TimeFrameExpand(validTrough1m, in1Minute);
-exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Entry signals ----
 Buy   = buySignal;
@@ -93,11 +93,10 @@ Plot(tema1m, "TEMA(" + NumToStr(temaLength, 1.0) + ")", colorAqua, styleLine | s
 PlotShapes(Buy * shapeUpArrow, colorGreen, 0, Low, -12);
 PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 
-Title = Name() + " | A08 Derivative Reversal" +
+Title = Name() + " | A08 Derivative Zero-Cross" +
         " | TEMA(" + NumToStr(temaLength, 1.0) + ")" +
         " | Lookback=" + NumToStr(lookback, 1.0) +
         " | MinSep=" + NumToStr(minSeparation, 1.0) +
         " | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
         " ProfM=" + NumToStr(profitMult, 1.1) +
-        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
-        " | Asian Session";
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

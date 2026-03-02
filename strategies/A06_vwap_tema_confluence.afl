@@ -12,60 +12,51 @@
 //
 // Exit: StdDev-based stop loss and profit target
 //
-// Designed for /GC (Gold Futures) Asian session (6PM-3AM EST).
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
-temaLength = Param("TEMA Length", 21, 5, 100, 1);
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
+temaLength = Param("TEMA Length", 8, 3, 50, 1);
 sdBars     = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult     = Param("SD Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;
 
 // ---- VWAP Clouds Indicator ----
+sessionResetTime = 93000;  // Reset VWAP at US market open (9:30 AM EST)
 vwStdev1 = 1;
 vwStdev2 = 2;
 vwStdev3 = 3;
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\vwap_clouds.afl"
 
-// ---- TEMA Indicator ----
-smoothingLength = temaLength;
-sourcePrice = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\tema.afl"
+// ---- TEMA Indicator (inline, using AmiBroker built-in EMA) ----
+ema1 = EMA(Close, temaLength);
+ema2 = EMA(ema1, temaLength);
+ema3 = EMA(ema2, temaLength);
+temas = 3 * ema1 - 3 * ema2 + ema3;
+
 
 // ---- StdDev Exit Indicator ----
 sdLookback   = sdBars;
 sdMultiplier = sdMult;
 sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdLookback);
+exitDistance = sdMultiplier * exitStdDev;
 
-// ---- Save computed arrays before restoring timeframe ----
 tema1m     = temas;
 vwap1m     = VWAP;
 exitDist1m = exitDistance;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- Confluence Entry Signals ----
 // Long:  price above VWAP (bullish context) + TEMA crosses above Close (contrarian dip buy)
 // Short: price below VWAP (bearish context) + Close crosses above TEMA (contrarian pop sell)
-buySignal   = asianSession AND Close > vwap1m AND Cross(tema1m, Close);
-shortSignal = asianSession AND Close < vwap1m AND Cross(Close, tema1m);
+buySignal   = Close > vwap1m AND Cross(tema1m, Close) AND isTargetSymbol;
+shortSignal = Close < vwap1m AND Cross(Close, tema1m) AND isTargetSymbol;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-tema1m      = TimeFrameExpand(tema1m, in1Minute);
-vwap1m      = TimeFrameExpand(vwap1m, in1Minute);
-exitDist1m  = TimeFrameExpand(exitDist1m, in1Minute);
-buySignal   = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Entry signals ----
 Buy   = buySignal;
@@ -95,5 +86,4 @@ PlotShapes(Short * shapeDownArrow, colorRed, 0, High, -12);
 Title = Name() + " | A06 VWAP+TEMA Confluence | TEMA(" + NumToStr(temaLength, 1.0) +
         ") | SD(" + NumToStr(sdBars, 1.0) + ")x" + NumToStr(sdMult, 1.1) +
         " ProfM=" + NumToStr(profitMult, 1.1) +
-        " = " + NumToStr(exitDist1m, 1.4) + " pts" +
-        " | Asian Session";
+        " = " + NumToStr(exitDist1m, 1.4) + " pts";

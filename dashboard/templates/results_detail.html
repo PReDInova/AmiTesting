@@ -16,6 +16,89 @@
 <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
 
 <style>
+    /* ── Modal Strategy Side Drawer ──────────────────── */
+    .modal-chart-wrapper {
+        display: flex;
+        overflow: hidden;
+        min-height: 0;
+    }
+    .modal-chart-main {
+        flex: 1 1 0%;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .modal-strategy-drawer {
+        width: 0;
+        min-width: 0;
+        overflow: hidden;
+        border-left: 0 solid #dee2e6;
+        transition: width 0.25s ease, min-width 0.25s ease, border-left-width 0.25s ease;
+        flex-shrink: 0;
+    }
+    .modal-strategy-drawer.open {
+        width: 300px;
+        min-width: 300px;
+        border-left-width: 1px;
+    }
+    .modal-strategy-drawer-inner {
+        width: 300px;
+        height: 100%;
+        overflow-y: auto;
+        padding: 12px;
+        font-size: 0.8rem;
+    }
+    .strategy-drawer-toggle.active {
+        background-color: #3b82f6 !important;
+        border-color: #3b82f6 !important;
+        color: #fff !important;
+    }
+    .drawer-section-title {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #94a3b8;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .drawer-param-table {
+        width: 100%;
+        font-size: 0.78rem;
+    }
+    .drawer-param-table td {
+        padding: 2px 6px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .drawer-param-table td:first-child {
+        font-weight: 600;
+        color: #475569;
+        white-space: nowrap;
+    }
+    .drawer-param-table td:last-child {
+        text-align: right;
+        color: #1e293b;
+    }
+    .drawer-indicator-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 8px 10px;
+        margin-bottom: 8px;
+    }
+    .drawer-indicator-card .ind-header {
+        font-weight: 600;
+        font-size: 0.78rem;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .drawer-indicator-card .ind-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+
     /* ── CodeMirror Overrides ──────────────────────────── */
     .CodeMirror {
         border: 1px solid #dee2e6;
@@ -1040,87 +1123,32 @@
                             {% endif %}
                         </tr>
                     </thead>
-                    <tbody>
-                        {% for trade in parsed.trades %}
-                        {% if parsed.columns is defined %}
-                            {# Dynamic columns from CSV #}
-                            {% set profit_col = parsed.metrics.get("profit_column_used", None) if parsed.metrics is defined and parsed.metrics is mapping else None %}
-                            {% if profit_col and trade.get(profit_col, "") != "" %}
-                                {% set pval = trade[profit_col] | float(0) %}
-                                {% if pval > 0 %}
-                        <tr class="trade-win trade-row-clickable"
-                                {% elif pval < 0 %}
-                        <tr class="trade-loss trade-row-clickable"
-                                {% else %}
-                        <tr class="trade-row-clickable"
-                                {% endif %}
-                            {% else %}
-                        <tr class="trade-row-clickable"
-                            {% endif %}
-                            data-symbol="{{ trade.get('Symbol', '') }}"
-                            data-entry-date="{{ trade.get('Date', '') }}"
-                            data-exit-date="{{ trade.get('Ex. date', '') }}"
-                            data-entry-price="{{ trade.get('Price', '') }}"
-                            data-exit-price="{{ trade.get('Ex. Price', '') }}"
-                            data-trade-type="{{ trade.get('Trade', '') }}"
-                            data-profit="{{ trade.get('Profit', '') }}"
-                            data-trade-index="{{ loop.index }}">
-                            <td class="text-muted">{{ loop.index }}</td>
-                            {% for col in parsed.columns %}
-                            <td>{{ trade[col] }}</td>
-                            {% endfor %}
-                        </tr>
-                        {% else %}
-                            {# Structured trade objects #}
-                            {% set profit = trade.profit|default(0)|float %}
-                        <tr class="trade-row-clickable {{ 'trade-win' if profit > 0 else ('trade-loss' if profit < 0 else '') }}"
-                            data-symbol="{{ trade.symbol|default('') }}"
-                            data-entry-date="{{ trade.entry_date|default('') }}"
-                            data-exit-date="{{ trade.exit_date|default('') }}"
-                            data-entry-price="{{ trade.entry_price|default('') }}"
-                            data-exit-price="{{ trade.exit_price|default('') }}"
-                            data-trade-type="{{ trade.type|default('') }}"
-                            data-profit="{{ trade.profit|default('') }}"
-                            data-trade-index="{{ loop.index }}">
-                            <td class="text-muted">{{ loop.index }}</td>
-                            <td class="fw-semibold">{{ trade.symbol|default('--') }}</td>
-                            <td>
-                                {% if trade.type is defined %}
-                                    {% if trade.type|lower == 'long' %}
-                                        <span class="badge bg-primary bg-opacity-10 text-primary">Long</span>
-                                    {% elif trade.type|lower == 'short' %}
-                                        <span class="badge bg-warning bg-opacity-10 text-warning">Short</span>
-                                    {% else %}
-                                        {{ trade.type }}
-                                    {% endif %}
-                                {% else %}
-                                    --
-                                {% endif %}
-                            </td>
-                            <td>{{ trade.entry_date|default('--') }}</td>
-                            <td>{{ trade.entry_price|default('--') }}</td>
-                            <td>{{ trade.exit_date|default('--') }}</td>
-                            <td>{{ trade.exit_price|default('--') }}</td>
-                            <td>{{ trade.shares|default('--') }}</td>
-                            <td class="text-end fw-semibold {{ 'text-success' if profit > 0 else ('text-danger' if profit < 0 else '') }}">
-                                {% if trade.profit is defined %}
-                                    {{ '%.2f'|format(trade.profit|float) }}
-                                {% else %}
-                                    --
-                                {% endif %}
-                            </td>
-                            <td class="text-end">
-                                {% if trade.cum_profit is defined %}
-                                    {{ '%.2f'|format(trade.cum_profit|float) }}
-                                {% else %}
-                                    --
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endif %}
-                        {% endfor %}
+                    <tbody id="btTradeBody">
+                        {# Rows rendered by JS with pagination #}
                     </tbody>
                 </table>
+            </div>
+            {# Pagination controls #}
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 px-3 py-2 border-top bg-light d-none"
+                 id="btPagination" style="font-size: 0.8rem;">
+                <div class="d-flex align-items-center gap-2">
+                    <span class="text-muted" id="btPageInfo">Showing 0 of 0</span>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <span class="text-muted me-1">Show:</span>
+                    <div class="btn-group btn-group-sm" id="btPageSizeGroup">
+                        <button type="button" class="btn btn-outline-secondary" data-size="25">25</button>
+                        <button type="button" class="btn btn-outline-secondary active" data-size="50">50</button>
+                        <button type="button" class="btn btn-outline-secondary" data-size="100">100</button>
+                        <button type="button" class="btn btn-outline-secondary" data-size="0">All</button>
+                    </div>
+                    <span class="mx-2 text-muted">|</span>
+                    <button class="btn btn-outline-secondary btn-sm" id="btPageFirst" title="First page"><i class="bi bi-chevron-bar-left"></i></button>
+                    <button class="btn btn-outline-secondary btn-sm" id="btPagePrev" title="Previous page"><i class="bi bi-chevron-left"></i></button>
+                    <span class="mx-1 fw-semibold" id="btPageLabel">1 / 1</span>
+                    <button class="btn btn-outline-secondary btn-sm" id="btPageNext" title="Next page"><i class="bi bi-chevron-right"></i></button>
+                    <button class="btn btn-outline-secondary btn-sm" id="btPageLast" title="Last page"><i class="bi bi-chevron-bar-right"></i></button>
+                </div>
             </div>
         </div>
     </div>
@@ -1332,7 +1360,15 @@
                     <i class="bi bi-bar-chart-line me-1"></i>
                     Trade Chart: <span id="chartTradeTitle">--</span>
                 </h6>
-                <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal" aria-label="Close"></button>
+                <div class="d-flex align-items-center gap-2">
+                    {% if strategy %}
+                    <button type="button" class="btn btn-outline-secondary btn-sm strategy-drawer-toggle" id="strategyDrawerToggle"
+                            title="Strategy info & parameters" style="font-size:0.75rem; padding:2px 8px;">
+                        <i class="bi bi-info-circle me-1"></i>Strategy
+                    </button>
+                    {% endif %}
+                    <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
             </div>
             <div class="modal-body p-0">
                 {# Trade summary row #}
@@ -1371,33 +1407,130 @@
                         {% endfor %}
                     </div>
                 </div>
-                {# Chart area with data tooltip #}
-                <div style="position:relative;">
-                    <div class="trade-data-tooltip" id="tradeDataTooltip"></div>
-                    {# Main chart container #}
-                    <div id="candlestickChartContainer">
-                        <div class="chart-loading-overlay" id="chartLoading">
-                            <div class="text-center">
-                                <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
-                                <p class="text-muted mt-2 mb-0" style="font-size: 0.85rem;">Loading chart data from AmiBroker...</p>
+                {# ── Flex wrapper: Chart (left) + Strategy Drawer (right) ── #}
+                <div class="modal-chart-wrapper">
+                    <div class="modal-chart-main">
+                        {# Chart area with data tooltip #}
+                        <div style="position:relative;">
+                            <div class="trade-data-tooltip" id="tradeDataTooltip"></div>
+                            {# Main chart container #}
+                            <div id="candlestickChartContainer">
+                                <div class="chart-loading-overlay" id="chartLoading">
+                                    <div class="text-center">
+                                        <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                                        <p class="text-muted mt-2 mb-0" style="font-size: 0.85rem;">Loading chart data from AmiBroker...</p>
+                                    </div>
+                                </div>
+                            </div>
+                            {# Sub-pane for non-overlay indicators (RSI, ADX, etc.) #}
+                            <div id="tradeSubPaneCard" style="display:none; border-top:1px solid #e9ecef;">
+                                <div style="position:relative;">
+                                    <span class="text-muted" id="tradeSubPaneLabel"
+                                          style="position:absolute;top:4px;left:8px;font-size:0.7rem;z-index:2;"></span>
+                                    <div id="tradeSubPaneChart" style="height:150px;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        {# Error state #}
+                        <div id="chartError" class="d-none p-3">
+                            <div class="callout-amber">
+                                <i class="bi bi-exclamation-circle me-1"></i>
+                                <span id="chartErrorMsg">Unable to load chart data.</span>
                             </div>
                         </div>
                     </div>
-                    {# Sub-pane for non-overlay indicators (RSI, ADX, etc.) #}
-                    <div id="tradeSubPaneCard" style="display:none; border-top:1px solid #e9ecef;">
-                        <div style="position:relative;">
-                            <span class="text-muted" id="tradeSubPaneLabel"
-                                  style="position:absolute;top:4px;left:8px;font-size:0.7rem;z-index:2;"></span>
-                            <div id="tradeSubPaneChart" style="height:150px;"></div>
+                    {# ── Strategy Side Drawer ── #}
+                    {% if strategy %}
+                    <div class="modal-strategy-drawer" id="strategyDrawer">
+                        <div class="modal-strategy-drawer-inner">
+                            {# Strategy name and summary #}
+                            <div class="fw-bold mb-1" style="font-size:0.88rem;">{{ strategy.name }}</div>
+                            {% if strategy.summary %}
+                            <p class="fst-italic text-muted mb-2" style="font-size:0.78rem;">{{ strategy.summary }}</p>
+                            {% endif %}
+
+                            {# Description #}
+                            {% if strategy.description %}
+                            <div class="drawer-section-title mt-2">Description</div>
+                            <div class="mb-3">
+                                {% for para in strategy.description.split('\n') %}
+                                    {% if para.strip() %}
+                                    <p class="mb-1" style="font-size:0.78rem; line-height:1.4;">{{ para }}</p>
+                                    {% endif %}
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {# Indicator parameters (from AFL parsing) #}
+                            {% if indicator_configs %}
+                            <div class="drawer-section-title mt-2">Indicator Parameters</div>
+                            {% for cfg in indicator_configs %}
+                            <div class="drawer-indicator-card">
+                                <div class="ind-header">
+                                    <span class="ind-dot" style="background:{{ cfg.color }};"></span>
+                                    {{ cfg.type | upper }}
+                                    <span class="text-muted" style="font-size:0.7rem;">{{ 'overlay' if cfg.overlay else 'sub-pane' }}</span>
+                                </div>
+                                {% if cfg.params %}
+                                <table class="drawer-param-table">
+                                    {% for key, val in cfg.params.items() %}
+                                    <tr>
+                                        <td>{% if cfg.param_mapping and cfg.param_mapping[key] is defined %}{{ cfg.param_mapping[key] }}{% else %}{{ key }}{% endif %}</td>
+                                        <td>{{ val }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </table>
+                                {% else %}
+                                <span class="text-muted" style="font-size:0.72rem;">Default parameters</span>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                            {% endif %}
+
+                            {# Strategy-level parameters (not mapped to indicators) #}
+                            {% if strategy_params %}
+                            <div class="drawer-section-title mt-2">Strategy Parameters</div>
+                            <table class="drawer-param-table">
+                                {% for sp in strategy_params %}
+                                <tr>
+                                    <td>{{ sp.name }}</td>
+                                    <td>{{ sp.default }}</td>
+                                </tr>
+                                {% endfor %}
+                            </table>
+                            {% endif %}
+
+                            {# Version parameters (from strategy_versions table) #}
+                            {% set params = run.version.parameters if (run and run.version and run.version.parameters) else (strategy.parameters if strategy.parameters else none) %}
+                            {% if params %}
+                            <div class="drawer-section-title mt-2">Run Parameters</div>
+                            <table class="drawer-param-table">
+                                {% if params is mapping %}
+                                    {% for key, val in params.items() %}
+                                    <tr><td>{{ key }}</td><td>{{ val }}</td></tr>
+                                    {% endfor %}
+                                {% else %}
+                                    {% for param in params %}
+                                    <tr>
+                                        <td>{{ param.name if param.name is defined else param }}</td>
+                                        <td>{{ param.value if param.value is defined else (param.default if param.default is defined else '') }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                {% endif %}
+                            </table>
+                            {% endif %}
+
+                            {# Risk notes #}
+                            {% if strategy.risk_notes %}
+                            <div class="drawer-section-title mt-3">Risk Notes</div>
+                            <div class="callout-amber" style="font-size:0.78rem;">
+                                <i class="bi bi-shield-exclamation me-1"></i>
+                                {{ strategy.risk_notes }}
+                            </div>
+                            {% endif %}
                         </div>
                     </div>
-                </div>
-                {# Error state #}
-                <div id="chartError" class="d-none p-3">
-                    <div class="callout-amber">
-                        <i class="bi bi-exclamation-circle me-1"></i>
-                        <span id="chartErrorMsg">Unable to load chart data.</span>
-                    </div>
+                    {% endif %}
                 </div>
             </div>
             {# Run context for JS (Sprint 4) #}

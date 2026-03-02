@@ -1,0 +1,263 @@
+{
+  "A01 - TEMA + ADX Trend Filter": {
+    "strategy_id": "b7a14f4a-7ba5-4a79-a858-bc19d18b8e40",
+    "run_id": "003d7f3e-a20f-4f01-ba95-670a90d97f59",
+    "exit_code": 0,
+    "trade_count": 3773,
+    "total_profit": 593.68,
+    "win_rate": 50.7,
+    "status": "HAS_TRADES"
+  },
+  "A02 - TEMA + ADX Anti-Trend (Mean Reversion)": {
+    "strategy_id": "83608e61-c897-44f8-a4a5-ddf534ce5e39",
+    "run_id": "64409b00-318f-4f13-bfe8-67598e20ae95",
+    "exit_code": 0,
+    "trade_count": 12391,
+    "total_profit": -163.21,
+    "win_rate": 53.4,
+    "status": "HAS_TRADES"
+  },
+  "A03 - Consolidation Zone Breakout": {
+    "strategy_id": "8a15a7d4-0085-4969-b1b0-3de7c0d6e817",
+    "run_id": "0b430ce6-dcc9-4a1c-bfb9-a9eccf175018",
+    "exit_code": 0,
+    "trade_count": 21,
+    "total_profit": 5.08,
+    "win_rate": 57.1,
+    "status": "HAS_TRADES"
+  },
+  "A04 - Consolidation Zone Fade (False Breakout)": {
+    "strategy_id": "50a719a8-70a8-47bb-972b-8952c2786cee",
+    "run_id": "e1073305-95b3-43cd-84d4-71f264e4bceb",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "A05 - VWAP Band Bounce": {
+    "strategy_id": "d09064eb-71aa-4b65-ac68-044f185e5e9e",
+    "run_id": "046df549-9c70-4e3c-af75-1441a4d585c6",
+    "exit_code": 0,
+    "trade_count": 1026,
+    "total_profit": -138.02,
+    "win_rate": 45.0,
+    "status": "HAS_TRADES"
+  },
+  "A06 - VWAP + TEMA Confluence Strategy": {
+    "strategy_id": "701d52fa-a20c-42d8-ba70-26f06dbe1add",
+    "run_id": "d4faa69c-e317-4a5d-a411-0565a77c62fa",
+    "exit_code": 0,
+    "trade_count": 1016,
+    "total_profit": -89.03,
+    "win_rate": 48.8,
+    "status": "HAS_TRADES"
+  },
+  "A07 - Range-Bound + VWAP Mean Reversion Strategy": {
+    "strategy_id": "3e976167-f6c2-450d-b9be-6b3ed31e10ff",
+    "run_id": "7e23a136-c6ca-439b-9a09-be14327cc711",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "A07 - Range-Bound VWAP Mean Reversion": {
+    "strategy_id": "5f54c275-5e19-4284-a043-936840eff563",
+    "run_id": "545d0989-22e6-45e8-9ca3-05133eaedc6c",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "A08 - Derivative Peak/Trough Reversal Strategy": {
+    "strategy_id": "4cd7202e-4c5c-4890-8054-9d972197f4c0",
+    "run_id": "eb1bf446-2444-42ef-826d-b3d4c65d5143",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "A09 - Derivative Peaks + ADX Weakening Trend Strategy": {
+    "strategy_id": "1472d6ba-77ca-48e2-ad2e-963717efb506",
+    "run_id": "75b94c3b-16fe-421d-8152-1bfb1ea82fd5",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "A10 - Full Stack: CZ Breakout + ADX + TEMA Strategy": {
+    "strategy_id": "00c69b4b-023c-4c94-a582-7b99d9954897",
+    "run_id": "cb5f46ec-7379-4862-8eba-032d71973323",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "B03 - Bollinger Band + RSI Mean Reversion": {
+    "strategy_id": "ef1e162b-2dca-4db3-b5be-4145821ac02b",
+    "run_id": "1c16c6bc-6d6b-433c-8a18-c73a5b999866",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "B04 - Stochastic Range Trading": {
+    "strategy_id": "2494c999-a400-4a99-a66c-5b93142a470b",
+    "run_id": "3866febc-34c2-4fd5-b7d7-6e8ba4ce4ab0",
+    "exit_code": 0,
+    "trade_count": 5567,
+    "total_profit": -295.52,
+    "win_rate": 50.2,
+    "status": "HAS_TRADES"
+  },
+  "B04 - Stochastic Reversal Trading": {
+    "strategy_id": "4515da94-c616-4ecf-8211-fb0522840fd1",
+    "run_id": "57c36ffc-8c6d-47f2-97cb-8de0c18cf7a6",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "B06 - Session VWAP Mean Reversion Enhanced": {
+    "strategy_id": "ad959428-748b-46cb-a696-333494a817e4",
+    "run_id": "3cda2e58-b213-4a41-9549-1d9057bfc1b4",
+    "exit_code": 0,
+    "trade_count": 378,
+    "total_profit": -452.95,
+    "win_rate": 49.7,
+    "status": "HAS_TRADES"
+  },
+  "B07 - Donchian Channel Breakout": {
+    "strategy_id": "227ec83e-eaed-46d2-a920-43e98b8f7882",
+    "run_id": "c770e832-062c-4d19-a1fd-54369b4692dd",
+    "exit_code": 0,
+    "trade_count": 1794,
+    "total_profit": -713.61,
+    "win_rate": 46.9,
+    "status": "HAS_TRADES"
+  },
+  "B09 - ADX-Filtered EMA Crossover": {
+    "strategy_id": "135afc6e-d8cc-4328-a1b6-d3f7754e684d",
+    "run_id": "b1516ad8-574c-4dcb-8ec4-c2b0795d3bb6",
+    "exit_code": 0,
+    "trade_count": 123,
+    "total_profit": -83.91,
+    "win_rate": 48.8,
+    "status": "HAS_TRADES"
+  },
+  "B13 - NY Momentum Carryover": {
+    "strategy_id": "3d52c8a4-777f-4321-a38b-2b6c0596c197",
+    "run_id": "529857e0-e1c4-4a15-9fda-1a4c5371916a",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C01 - Consolidation + VWAP + ADX Triple Filter": {
+    "strategy_id": "12bd57d0-ef76-42a9-a95a-d481aa8341b1",
+    "run_id": "140386b2-d31a-473f-abc1-80ab48814232",
+    "exit_code": 0,
+    "trade_count": 10,
+    "total_profit": 18.26,
+    "win_rate": 60.0,
+    "status": "HAS_TRADES"
+  },
+  "C02 - VWAP Bands + Derivative Peaks (Precision Reversal)": {
+    "strategy_id": "8bc59ba3-9322-4957-8e64-607dcc006c6f",
+    "run_id": "cc2c24a6-0c37-49ee-9ab5-fb9c86c664dd",
+    "exit_code": 0,
+    "trade_count": 264,
+    "total_profit": -264.8,
+    "win_rate": 48.9,
+    "status": "HAS_TRADES"
+  },
+  "C03 - Range-Bound Regime + Stochastic": {
+    "strategy_id": "35bda1f8-7238-4d1a-89cc-958f58f988a3",
+    "run_id": "2af3b2af-88e3-45f8-bad7-a2697a1ee3f6",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C03 - Range-Bound Stochastic Reversal": {
+    "strategy_id": "40aef56d-a4ae-4e25-92e3-a94b20a08724",
+    "run_id": "e60a7a39-3d37-4471-ac0b-29ac4ca1ffdc",
+    "exit_code": 0,
+    "trade_count": 5567,
+    "total_profit": -261.81,
+    "win_rate": 49.1,
+    "status": "HAS_TRADES"
+  },
+  "C05 - TEMA Contrarian + VWAP + Session Fade": {
+    "strategy_id": "c0e490d0-590e-4e14-8e51-84df2268e235",
+    "run_id": "3e9012c1-9199-4a92-89e9-38e45cd62d32",
+    "exit_code": 0,
+    "trade_count": 32200,
+    "total_profit": 3607.66,
+    "win_rate": 58.1,
+    "status": "HAS_TRADES"
+  },
+  "C06 - ADX Regime Switch (Auto Trend/Range)": {
+    "strategy_id": "1dfd7138-436a-496d-a5d5-84f2e0e86859",
+    "run_id": "7ca0efe2-19f4-483d-bc5d-e1c9b9d96fa4",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C08 - VWAP Cloud Breakout + ADX Momentum": {
+    "strategy_id": "de5f9e1c-9c5f-4c6c-9cab-a14ef3c2fc71",
+    "run_id": "3c1671d9-77e3-45ba-a261-6704ecd372da",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "C09 - Double Touch Derivative Reversal": {
+    "strategy_id": "2d717891-0b03-4e94-8e96-c46375da769c",
+    "run_id": "10f3c720-7bd5-43c4-8a51-149bfe728e3b",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  },
+  "D01 - Derivative Basic Reversal": {
+    "strategy_id": "fc09ac9e-7e61-4829-8ba3-409f38d94f2d",
+    "run_id": "1e937062-fae8-4e72-a285-a46e3f24716b",
+    "exit_code": 0,
+    "trade_count": 16251,
+    "total_profit": -4682.43,
+    "win_rate": 41.7,
+    "status": "HAS_TRADES"
+  },
+  "D02 - NQ Derivative TEMA Zero-Cross": {
+    "strategy_id": "2cf8394f-ecf9-40df-8e81-b2c1fc5d259b",
+    "run_id": "034826ff-68e9-4fa3-a822-df1a088cd75e",
+    "exit_code": 0,
+    "trade_count": 4328,
+    "total_profit": -1868.37,
+    "win_rate": 43.2,
+    "status": "HAS_TRADES"
+  },
+  "D02 - NQ Derivative TEMA Zero-Cross_reverse": {
+    "strategy_id": "3b38682e-b81d-4722-9994-3331d55a8e5a",
+    "run_id": "904dae81-b636-4e21-ac90-65f59161801f",
+    "exit_code": 1,
+    "trade_count": 0,
+    "total_profit": 0,
+    "win_rate": 0,
+    "status": "ZERO_TRADES"
+  }
+}

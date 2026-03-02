@@ -1,0 +1,12 @@
+{
+  "D02 - NQ Derivative TEMA Zero-Cross": {
+    "strategy_id": "2cf8394f-ecf9-40df-8e81-b2c1fc5d259b",
+    "version_id": "62804ad5-34e0-4da7-a6c7-0f9cdda23200",
+    "run_id": "32d755d2-3645-476d-a17b-a643944cb5e8",
+    "exit_code": 0,
+    "trade_count": 939,
+    "total_profit": -1797.75,
+    "win_rate": 36.4,
+    "status": "HAS_TRADES"
+  }
+}

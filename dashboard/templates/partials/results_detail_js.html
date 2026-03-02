@@ -20,6 +20,11 @@
         netProfitCol: '',
         equityCurveUrl: {% if run %}'/api/run/{{ run.id }}/equity-curve{% if selected_symbol %}?symbol={{ selected_symbol }}{% endif %}'{% else %}'/api/results/{{ filename }}/equity-curve'{% endif %},
         indicatorConfigs: {{ indicator_configs | tojson }},
+        tradeData: {
+            columns: {{ (parsed.columns if parsed and parsed.columns is defined else []) | tojson }},
+            trades: {{ (parsed.trades if parsed and parsed.trades else []) | tojson }},
+            profitColumn: {{ (parsed.metrics.get("profit_column_used", "") if parsed and parsed.metrics is defined and parsed.metrics is mapping else "") | tojson }}
+        },
         {% endif %}
     };
 </script>

@@ -2,11 +2,10 @@
 // A04 - Consolidation Zone Fade (False Breakout)
 // ===========================================
 //
-// False breakout / fade strategy for /GC Gold Futures during the Asian
-// session (6 PM - 3 AM EST). Trades false breakouts by detecting when
+// False breakout / fade strategy on native 1-minute data. Trades false breakouts by detecting when
 // price breaks out of a consolidation zone but then crosses back inside.
 // This captures the common pattern of stop-hunting / failed breakouts
-// that occur frequently in the lower-volatility Asian session.
+// that occur frequently in lower-volatility periods.
 //
 // Uses the persisted zone boundaries (lastCzHigh / lastCzLow) that
 // remain available after the consolidation zone ends.
@@ -18,9 +17,12 @@
 //
 // Exit: StdDev-based symmetric stop loss and profit target
 //
-// Designed for /GC (Gold Futures) tick data aggregated to 1-minute bars.
+// Targets NQ and GC futures on native 1-minute data.
 
 // ---- Strategy Parameters ----
+// ---- Symbol filter (NQ and GC futures) ----
+isTargetSymbol = Name() == "NQ" OR Name() == "GC";
+
 czTemaLength    = Param("CZ TEMA Length", 21, 5, 50, 1);
 czFlatThreshold = Param("CZ Flat Threshold", 0.50, 0.05, 2.0, 0.05);
 czMaxRangeTicks = Param("CZ Max Range (ticks)", 80, 20, 200, 5);
@@ -29,11 +31,6 @@ sdBars          = Param("StdDev Lookback (bars)", 30, 5, 200, 1);
 sdMult          = Param("StdDev Multiplier", 1.0, 0.1, 5.0, 0.1);
 profitMult      = Param("Profit Target Mult", 1.0, 0.5, 3.0, 0.1);
 
-// ---- Aggregate ticks into 1-minute bars ----
-TimeFrameSet(in1Minute);
-
-// ---- Session reset for Asian session ----
-sessionResetTime = 180000;  // Asian session start (6 PM EST)
 
 // ---- Consolidation Zone Indicator (from indicator library) ----
 // This provides: isConsolidating, czHigh, czLow, czMid,
@@ -41,15 +38,10 @@ sessionResetTime = 180000;  // Asian session start (6 PM EST)
 //                lastCzHigh, lastCzLow (persisted after zone ends)
 #include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\consolidation_zones.afl"
 
-// ---- StdDev Exit Indicator (from indicator library) ----
-sdLookback   = sdBars;
-sdMultiplier = sdMult;
-sdSource     = Close;
-#include_once "C:\Users\prestondinova\Documents\AmiTesting\indicators\stdev_exit.afl"
+// ---- StdDev Exit Levels (inline) ----
+exitStdDev = StDev(Close, sdBars);
+exitDistance = sdMult * exitStdDev;
 
-// ---- Asian Session Filter ----
-tn = TimeNum();
-asianSession = (tn >= 180000) OR (tn <= 030000);
 
 // ---- False Breakout Detection ----
 // Fade long: price was below the persisted zone low, then crosses back above
@@ -65,10 +57,9 @@ fadeShort = Ref(Close, -1) >= Ref(lastCzHigh, -1)
             AND NOT IsNull(lastCzHigh);
 
 // ---- Entry Signals (filtered by session) ----
-buySignal   = fadeLong AND asianSession;
-shortSignal = fadeShort AND asianSession;
+buySignal   = fadeLong AND isTargetSymbol;
+shortSignal = fadeShort AND isTargetSymbol;
 
-// ---- Save computed arrays before restoring timeframe ----
 exitDist1m     = exitDistance;
 lastCzHigh1m   = lastCzHigh;
 lastCzLow1m    = lastCzLow;
@@ -76,17 +67,6 @@ czHigh1m       = czHigh;
 czLow1m        = czLow;
 isConsol1m     = isConsolidating;
 
-TimeFrameRestore();
-
-// ---- Expand to base (tick) timeframe ----
-exitDist1m    = TimeFrameExpand(exitDist1m, in1Minute);
-lastCzHigh1m  = TimeFrameExpand(lastCzHigh1m, in1Minute);
-lastCzLow1m   = TimeFrameExpand(lastCzLow1m, in1Minute);
-czHigh1m      = TimeFrameExpand(czHigh1m, in1Minute);
-czLow1m       = TimeFrameExpand(czLow1m, in1Minute);
-isConsol1m    = TimeFrameExpand(isConsol1m, in1Minute);
-buySignal     = TimeFrameExpand(buySignal, in1Minute, expandFirst);
-shortSignal   = TimeFrameExpand(shortSignal, in1Minute, expandFirst);
 
 // ---- Assign Entry/Exit Signals ----
 Buy   = buySignal;
